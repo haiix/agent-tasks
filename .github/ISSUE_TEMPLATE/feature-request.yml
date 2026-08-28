@@ -1,0 +1,43 @@
+name: 機能提案
+description: 新機能や既存機能の改善を提案します
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい課題
+      description: 機能そのものではなく、利用者が困っている状況を説明してください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案する変更
+      description: 期待する利用方法やAPI、UIの例があれば記載してください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 検討した代替案
+      description: 現在の回避策や、採用しなかった方法があれば記載してください。
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 影響範囲
+      description: CLI、保存形式、タスクモデル、互換性など、影響しそうな範囲を記載してください。
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 確認事項
+      options:
+        - label: 既存のIssueに同じ提案がないことを確認しました。
+          required: true
+        - label: 破壊的変更になり得る場合、その影響を記載しました。
+          required: true

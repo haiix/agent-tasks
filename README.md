@@ -5,6 +5,19 @@
 > [!NOTE]
 > このプロジェクトは現在、設計・計画段階です。CLIはまだ実装されていません。
 
+## 開発
+
+Node.js 24を使用する。
+
+```shell
+npm install
+npm run typecheck
+npm test
+npm run build
+```
+
+`npm run dev -- <command>`でTypeScriptソースを直接実行できる。ビルドすると、実行時npm依存のない単一ESMファイル`dist/taskctl.mjs`が生成される。
+
 ## 目的
 
 - Node.js CLIとしてローカルで動作する

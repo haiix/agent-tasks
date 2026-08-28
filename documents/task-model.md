@@ -85,7 +85,33 @@ high
 urgent
 ```
 
-ID形式、最大文字数、metadataの上限などの詳細な制約は、ドメイン実装時に確定して追記する。
+## 入力制約
+
+文字数はUTF-16コード単位ではなくUnicodeコードポイントで数える。文字列と配列には次の上限を適用する。
+
+| 対象                                     | 制約                                   |
+| ---------------------------------------- | -------------------------------------- |
+| `title`                                  | 1〜200文字、空白のみは不可             |
+| `description`、`blockedReason`、`result` | 最大20,000文字                         |
+| タスクID、agent ID、label                | 1〜200文字、空白のみは不可             |
+| `labels`、`dependsOn`                    | 最大50件、重複不可                     |
+| `metadata`                               | JSON object、UTF-8で64 KiB、最大10階層 |
+
+- `blockedReason`と`result`は設定時に空白のみの値を許可しない。
+- `metadata`には文字列、真偽値、null、有限数値、配列、objectだけを許可する。
+- 入力の`labels`と`dependsOn`はUnicodeコードポイント昇順に正規化する。
+- CLI入力の未知のプロパティは無視せず、構造化された`VALIDATION_ERROR`として拒否する。
+
+## 保存時の整合性
+
+- 日時はUTCのRFC 3339形式かつミリ秒3桁固定とする。
+- `createdAt <= startedAt/completedAt <= updatedAt`を満たす。nullableな日時は比較対象外とする。
+- `pending`ではassignee、blockedReason、result、startedAt、completedAtをnullとする。
+- `in_progress`ではassigneeとstartedAtを必須とし、blockedReason、result、completedAtをnullとする。
+- `blocked`ではblockedReasonを必須とする。assigneeとstartedAtは両方設定するか両方nullとし、resultとcompletedAtはnullとする。
+- `done`ではassignee、startedAt、result、completedAtを必須とし、blockedReasonをnullとする。
+- `canceled`ではcompletedAtを必須とする。assigneeとstartedAtは両方設定するか両方nullとし、blockedReasonとresultはnullとする。
+- versionは1以上のsafe integerとする。
 
 ## 依存関係
 

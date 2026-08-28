@@ -11,10 +11,10 @@ Node.js 24を使用する。
 
 ```shell
 npm install
-npm run typecheck
-npm test
-npm run build
+npm run check
 ```
+
+`npm run check`は型検査、lint、書式検査、テスト、ビルドを実行する。書式を修正する場合は`npm run format`を使用する。
 
 `npm run dev -- <command>`でTypeScriptソースを直接実行できる。ビルドすると、実行時npm依存のない単一ESMファイル`dist/taskctl.mjs`が生成される。
 

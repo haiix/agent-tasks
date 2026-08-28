@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { runCli } from "../src/main.ts";
 
-test("returns a machine-readable error when no command is provided", () => {
+void test("returns a machine-readable error when no command is provided", () => {
   let stdout = "";
 
   const result = runCli([], {
@@ -24,7 +24,7 @@ test("returns a machine-readable error when no command is provided", () => {
   });
 });
 
-test("reports an unknown command without throwing", () => {
+void test("reports an unknown command without throwing", () => {
   let stdout = "";
 
   const result = runCli(["unknown"], {
@@ -34,5 +34,12 @@ test("reports an unknown command without throwing", () => {
   });
 
   assert.equal(result.exitCode, 2);
-  assert.equal(JSON.parse(stdout).error.details.command, "unknown");
+  assert.deepEqual(JSON.parse(stdout), {
+    ok: false,
+    error: {
+      code: "INVALID_ARGUMENT",
+      message: "Unknown command: unknown",
+      details: { command: "unknown" },
+    },
+  });
 });

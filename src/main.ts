@@ -12,7 +12,10 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
     ok: false,
     error: {
       code: "INVALID_ARGUMENT",
-      message: command === null ? "A command is required." : `Unknown command: ${command}`,
+      message:
+        command === null
+          ? "A command is required."
+          : `Unknown command: ${command}`,
       details: command === null ? {} : { command },
     },
   };

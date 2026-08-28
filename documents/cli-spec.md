@@ -19,10 +19,10 @@ node taskctl.mjs <command> [options]
 
 全コマンドで利用できる共通オプションは次のとおり。
 
-| オプション | 既定値 | 意味 |
-| --- | --- | --- |
-| `--db <path>` | 自動解決 | 使用するSQLiteファイル |
-| `--format <json\|text>` | `json` | stdoutの成功レスポンス形式 |
+| オプション              | 既定値   | 意味                       |
+| ----------------------- | -------- | -------------------------- |
+| `--db <path>`           | 自動解決 | 使用するSQLiteファイル     |
+| `--format <json\|text>` | `json`   | stdoutの成功レスポンス形式 |
 
 相対的な`--db`と`AGENT_TASKS_DB`はプロセスのカレントディレクトリを基準に絶対パスへ解決する。DBパスは次の優先順位で決定する。
 
@@ -127,7 +127,14 @@ node taskctl.mjs init [--db <path>]
 親ディレクトリ探索は行わず、解決したDBを最新スキーマへ初期化またはマイグレーションする。既に最新ならデータを変更せず成功する。
 
 ```json
-{"ok":true,"data":{"dbPath":"/project/.agent-tasks/tasks.sqlite","schemaVersion":1,"created":true}}
+{
+  "ok": true,
+  "data": {
+    "dbPath": "/project/.agent-tasks/tasks.sqlite",
+    "schemaVersion": 1,
+    "created": true
+  }
+}
 ```
 
 `created`はこの実行でDBを新規作成した場合だけ`true`とする。
@@ -141,7 +148,12 @@ node taskctl.mjs create --input-json <json-or->
 入力は`title`を必須とし、`description`、`priority`、`labels`、`metadata`、`dependsOn`を任意とする。省略値は順に`""`、`"normal"`、`[]`、`{}`、`[]`である。`dependsOn`は既存タスクIDの配列で、重複を拒否する。ID、状態、担当、日時、versionはCLIが設定するため入力できない。
 
 ```json
-{"title":"Implement parser","priority":"high","labels":["cli"],"dependsOn":["01J..."]}
+{
+  "title": "Implement parser",
+  "priority": "high",
+  "labels": ["cli"],
+  "dependsOn": ["01J..."]
+}
 ```
 
 成功時の`data`は`{"task": <Task>, "dependsOn": [<task-id>]}`とする。
@@ -227,11 +239,11 @@ node taskctl.mjs transition --id <task-id> --to <status>
 
 許可された通常遷移だけを実行する。`--agent`は操作主体である。現在のassigneeがnullでなければagentとの一致を要求し、不一致は`STATE_CONFLICT`とする。これにより、未割り当ての`pending`タスクも`blocked`または`canceled`へ遷移できる。遷移先ごとのJSON入力は次のとおり。
 
-| 遷移先 | `--input-json` | 入力 |
-| --- | --- | --- |
-| `blocked` | 必須 | `{"blockedReason":"..."}` |
-| `done` | 必須 | `{"result":"..."}` |
-| `pending`、`canceled` | 省略 | 入力不可 |
+| 遷移先                | `--input-json` | 入力                      |
+| --------------------- | -------------- | ------------------------- |
+| `blocked`             | 必須           | `{"blockedReason":"..."}` |
+| `done`                | 必須           | `{"result":"..."}`        |
+| `pending`、`canceled` | 省略           | 入力不可                  |
 
 `pending`へ戻す場合はassignee、startedAt、blockedReason、result、completedAtをnullにする。`blocked`ではblockedReasonを設定し、resultとcompletedAtをnullにする。`done`ではblockedReasonをnullにし、resultとcompletedAtを設定する。`canceled`ではblockedReasonとresultをnullにし、completedAtを設定する。全遷移でversionを増加する。成功時の`data`は`{"task": <Task>, "dependsOn": [<task-id>]}`とする。
 
@@ -267,20 +279,20 @@ node taskctl.mjs history --id <task-id> [--limit <1..500>] [--cursor <cursor>]
 ```
 
 ```json
-{"ok":true,"data":{"events":[],"nextCursor":null}}
+{ "ok": true, "data": { "events": [], "nextCursor": null } }
 ```
 
 `fromVersion`は`created`だけnull、それ以外は直前のversionとする。イベントtypeと`details`は次のとおり。`changes`の各値は`{"from":<old-value>,"to":<new-value>}`であり、入力で指定されたプロパティだけを含む。
 
-| `type` | `details` |
-| --- | --- |
-| `created` | `{"task": <Task>, "dependsOn": [<task-id>]}` |
-| `updated` | `{"changes": {<input-property>: {"from": ..., "to": ...}}}` |
-| `dependencyAdded` | `{"dependsOn":"<task-id>"}` |
-| `dependencyRemoved` | `{"dependsOn":"<task-id>"}` |
-| `claimed` | `{"fromStatus":"pending","toStatus":"in_progress","assignee":"<agent-id>"}` |
-| `transitioned` | `{"fromStatus":"...","toStatus":"...","blockedReason":null,"result":null}` |
-| `reopened` | `{"fromStatus":"done|canceled","toStatus":"pending"}` |
+| `type`              | `details`                                                                   |
+| ------------------- | --------------------------------------------------------------------------- |
+| `created`           | `{"task": <Task>, "dependsOn": [<task-id>]}`                                |
+| `updated`           | `{"changes": {<input-property>: {"from": ..., "to": ...}}}`                 |
+| `dependencyAdded`   | `{"dependsOn":"<task-id>"}`                                                 |
+| `dependencyRemoved` | `{"dependsOn":"<task-id>"}`                                                 |
+| `claimed`           | `{"fromStatus":"pending","toStatus":"in_progress","assignee":"<agent-id>"}` |
+| `transitioned`      | `{"fromStatus":"...","toStatus":"...","blockedReason":null,"result":null}`  |
+| `reopened`          | `{"fromStatus":"done\|canceled","toStatus":"pending"}`                      |
 
 `transitioned`の`blockedReason`と`result`はnullableだが省略しない。イベントは作成時の値を保持し、後のタスク更新によって書き換えない。
 
@@ -314,13 +326,13 @@ versionを必要とする操作では、対象の存在、expected version、現
 
 終了コードは大分類、`error.code`はプログラムが分岐に使用する安定した詳細分類である。
 
-| 終了コード | 意味 | `error.code` |
-| ---: | --- | --- |
-| 0 | 成功 | なし |
-| 2 | コマンド使用方法または入力の誤り | `UNKNOWN_COMMAND`, `INVALID_ARGUMENT`, `INVALID_JSON`, `VALIDATION_ERROR`, `UNSUPPORTED_FORMAT`, `CURSOR_INVALID` |
-| 3 | 対象または初期化済みDBが存在しない | `TASK_NOT_FOUND`, `DEPENDENCY_NOT_FOUND`, `NOT_INITIALIZED` |
-| 4 | 楽観ロック、状態、依存関係の競合 | `VERSION_CONFLICT`, `STATE_CONFLICT`, `NOT_RUNNABLE`, `DEPENDENCY_CONFLICT` |
-| 5 | ストレージまたは予期しない内部障害 | `DB_BUSY`, `DB_INVALID`, `SCHEMA_VERSION_UNSUPPORTED`, `STORAGE_ERROR`, `INTERNAL_ERROR` |
+| 終了コード | 意味                               | `error.code`                                                                                                      |
+| ---------: | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+|          0 | 成功                               | なし                                                                                                              |
+|          2 | コマンド使用方法または入力の誤り   | `UNKNOWN_COMMAND`, `INVALID_ARGUMENT`, `INVALID_JSON`, `VALIDATION_ERROR`, `UNSUPPORTED_FORMAT`, `CURSOR_INVALID` |
+|          3 | 対象または初期化済みDBが存在しない | `TASK_NOT_FOUND`, `DEPENDENCY_NOT_FOUND`, `NOT_INITIALIZED`                                                       |
+|          4 | 楽観ロック、状態、依存関係の競合   | `VERSION_CONFLICT`, `STATE_CONFLICT`, `NOT_RUNNABLE`, `DEPENDENCY_CONFLICT`                                       |
+|          5 | ストレージまたは予期しない内部障害 | `DB_BUSY`, `DB_INVALID`, `SCHEMA_VERSION_UNSUPPORTED`, `STORAGE_ERROR`, `INTERNAL_ERROR`                          |
 
 エラー詳細は次の規則に従う。
 

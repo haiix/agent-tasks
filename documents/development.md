@@ -12,7 +12,7 @@
 ```text
 TypeScript + ESM modules
           ↓
-type check and test
+lint, format check, type check and test
           ↓
 esbuild
           ↓
@@ -25,12 +25,16 @@ single ESM taskctl.mjs
 
 - Node.js 24 LTS
 - TypeScriptのstrict mode
+- Biomeによる静的解析
+- Prettierによるコードとドキュメントの書式統一
 - Node向けESMとモジュール解決
 - esbuildによる単一ESMファイルへのバンドル
 - Node.js組み込みテストランナー
 - Node.js組み込みの`node:sqlite`
 
-ESLintやフォーマッターなどは必要性が明確になった時点で追加する。大規模なCLIフレームワーク、ORM、DIコンテナはMVPでは採用しない。
+大規模なCLIフレームワーク、ORM、DIコンテナはMVPでは採用しない。
+
+変更を提出する前に`npm run check`を実行する。書式を修正する場合は`npm run format`を使用する。
 
 ## ソース構成案
 

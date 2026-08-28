@@ -5,7 +5,9 @@
 
 ## 基本方針
 
-開発にはTypeScriptとESMを使用する。開発ソースは責務ごとに複数モジュールへ分割し、配布時に単一のESM `taskctl.js`へバンドルする。
+開発にはTypeScriptとESMを使用する。開発ソースは責務ごとに複数モジュールへ分割し、配布時に単一のESM `taskctl.mjs`へバンドルする。
+
+成果物には`.mjs`拡張子を使用し、配置先プロジェクトの`package.json`にある`type`設定にかかわらず、Node.jsが常にESMとして解釈できるようにする。
 
 ```text
 TypeScript + ESM modules
@@ -14,7 +16,7 @@ type check and test
           ↓
 esbuild
           ↓
-single ESM taskctl.js
+single ESM taskctl.mjs
 ```
 
 配布物には実行時npm依存を持たせない。
@@ -42,7 +44,7 @@ src/
   errors.ts
 test/
 dist/
-  taskctl.js
+  taskctl.mjs
 ```
 
 具体的な構成は実装開始時に調整できるが、CLI解析、ドメインルール、SQLite処理を分離する。

@@ -2,8 +2,8 @@ name: Prepare release
 
 on:
   schedule:
-    # Run at midnight in Japan (15:00 UTC) to batch main branch changes.
-    - cron: "0 15 * * *"
+    # Run at midnight every Monday in Japan (Sunday 15:00 UTC) to batch main branch changes.
+    - cron: "0 15 * * 0"
   workflow_dispatch:
 
 permissions:

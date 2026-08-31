@@ -20,6 +20,10 @@ import {
   validateTaskDependencies,
 } from "../validation/task.ts";
 import {
+  validateTaskEvent,
+  type ValidatedTaskEvent,
+} from "../validation/task-event.ts";
+import {
   configureConnection,
   toStorageError,
   verifyDatabaseSchema,
@@ -154,16 +158,7 @@ export interface ListResult {
   readonly nextCursor: string | null;
 }
 
-export interface TaskEvent {
-  readonly id: string;
-  readonly taskId: string;
-  readonly type: string;
-  readonly actor: string | null;
-  readonly occurredAt: string;
-  readonly fromVersion: number | null;
-  readonly toVersion: number;
-  readonly details: Readonly<Record<string, unknown>>;
-}
+export type TaskEvent = ValidatedTaskEvent;
 
 export interface HistoryResult {
   readonly events: readonly TaskEvent[];
@@ -667,8 +662,10 @@ export function getTaskHistory(
         : decodeHistoryCursor(cursor, taskId, limit);
     const rows = database
       .prepare(
-        `SELECT id, task_id, type, actor, occurred_at, from_version, to_version,
-         details_json FROM task_events WHERE task_id = ?
+        `SELECT id, task_id, type, actor, occurred_at,
+         CAST(from_version AS REAL) AS from_version,
+         CAST(to_version AS REAL) AS to_version, details_json
+         FROM task_events WHERE task_id = ?
          ${after === undefined ? "" : "AND (occurred_at > ? OR (occurred_at = ? AND id > ?))"}
          ORDER BY occurred_at, id LIMIT ?`,
       )
@@ -891,26 +888,20 @@ function insertTaskEvent(database: DatabaseSync, event: TaskEvent): void {
 }
 
 function rowToTaskEvent(row: TaskEventRow): TaskEvent {
-  const details = JSON.parse(row.details_json) as unknown;
-  if (
-    details === null ||
-    typeof details !== "object" ||
-    Array.isArray(details)
-  ) {
-    throw new StoredTaskInvalidError(
-      new Error("Event details must be an object."),
-    );
+  try {
+    return validateTaskEvent({
+      id: row.id,
+      taskId: row.task_id,
+      type: row.type,
+      actor: row.actor,
+      occurredAt: row.occurred_at,
+      fromVersion: row.from_version,
+      toVersion: row.to_version,
+      details: JSON.parse(row.details_json) as unknown,
+    });
+  } catch (error) {
+    throw new StoredTaskInvalidError(error);
   }
-  return {
-    id: row.id,
-    taskId: row.task_id,
-    type: row.type,
-    actor: row.actor,
-    occurredAt: row.occurred_at,
-    fromVersion: row.from_version,
-    toVersion: row.to_version,
-    details: details as Readonly<Record<string, unknown>>,
-  };
 }
 
 function changeTaskDependency(

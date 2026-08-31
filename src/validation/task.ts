@@ -340,6 +340,9 @@ function validateString(
     issues.add(path, "type", "Expected a string.");
     return undefined;
   }
+  if (!isWellFormedUnicode(value)) {
+    issues.add(path, "unicode", "Value must be well-formed Unicode.");
+  }
   if (options.nonBlank === true && value.trim().length === 0) {
     issues.add(path, "blank", "Value must not be blank.");
   }
@@ -351,6 +354,10 @@ function validateString(
     );
   }
   return value;
+}
+
+export function isWellFormedUnicode(value: string): boolean {
+  return value.isWellFormed();
 }
 
 function validateNullableString(

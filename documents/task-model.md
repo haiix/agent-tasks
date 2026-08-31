@@ -98,6 +98,7 @@ urgent
 | `metadata`                               | JSON object、UTF-8で64 KiB、最大10階層 |
 
 - `blockedReason`と`result`は設定時に空白のみの値を許可しない。
+- `metadata`内を除く文字列値はwell-formed Unicodeとし、孤立したUTF-16サロゲートを拒否する。
 - `metadata`には文字列、真偽値、null、有限数値、配列、objectだけを許可する。
 - 入力の`labels`と`dependsOn`はUnicodeコードポイント昇順に正規化する。
 - CLI入力の未知のプロパティは無視せず、構造化された`VALIDATION_ERROR`として拒否する。

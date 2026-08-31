@@ -99,6 +99,22 @@ void describe("create input validation", () => {
     assert.equal(issues[0]?.code, "too_long");
   });
 
+  void test("rejects isolated UTF-16 surrogates", () => {
+    const issues = validationIssues(() =>
+      validateCreateTaskInput({
+        title: "Invalid \ud800",
+        description: "Invalid \udfff",
+      }),
+    );
+    assert.deepEqual(
+      issues.map(({ path, code }) => ({ path, code })),
+      [
+        { path: "description", code: "unicode" },
+        { path: "title", code: "unicode" },
+      ],
+    );
+  });
+
   void test("rejects oversized and non-JSON metadata", () => {
     const oversized = validationIssues(() =>
       validateCreateTaskInput({

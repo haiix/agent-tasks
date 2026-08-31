@@ -28,6 +28,7 @@ import {
 } from "./storage/path.ts";
 import {
   TASK_LIMITS,
+  isWellFormedUnicode,
   validateCreateTaskInput,
   validateUpdateTaskInput,
 } from "./validation/task.ts";
@@ -326,7 +327,8 @@ function requiredIdentifier(options: ParsedOptions, name: string): string {
     throw invalidArgument(name, undefined, "A required option is missing.");
   if (
     [...value].length > TASK_LIMITS.identifierCharacters ||
-    value.trim().length === 0
+    value.trim().length === 0 ||
+    !isWellFormedUnicode(value)
   ) {
     throw invalidArgument(name, value, "Invalid identifier.");
   }

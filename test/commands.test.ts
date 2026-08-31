@@ -169,6 +169,63 @@ void describe("create/get/update commands", () => {
     assert.equal(result.error?.code, "DB_INVALID");
     assert.deepEqual(result.error?.details, { dbPath: fixture.dbPath });
   });
+
+  void test("reports invalid stored task data as DB_INVALID", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({ title: "Stored task" });
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      database
+        .prepare("UPDATE tasks SET labels_json = ? WHERE id = ?")
+        .run(
+          JSON.stringify(Array.from({ length: 51 }, (_, index) => `l${index}`)),
+          created.data.task.id as string,
+        );
+    } finally {
+      database.close();
+    }
+
+    const result = fixture.run(["get", "--id", created.data.task.id as string]);
+    assert.equal(result.exitCode, 5);
+    assert.deepEqual(result.error, {
+      code: "DB_INVALID",
+      message: "Stored task data is invalid.",
+      details: { dbPath: fixture.dbPath },
+    });
+  });
+
+  void test("rejects isolated UTF-16 surrogates before writing to SQLite", () => {
+    const fixture = initializedDatabase();
+    const result = fixture.run([
+      "create",
+      "--input-json",
+      JSON.stringify({ title: "Invalid \ud800" }),
+    ]);
+    assert.equal(result.exitCode, 2);
+    assert.deepEqual(result.error, {
+      code: "VALIDATION_ERROR",
+      message: "Input validation failed.",
+      details: {
+        issues: [
+          {
+            path: "title",
+            code: "unicode",
+            message: "Value must be well-formed Unicode.",
+          },
+        ],
+      },
+    });
+
+    const database = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(
+        database.prepare("SELECT count(*) AS count FROM tasks").get()?.count,
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
 });
 
 void describe("list command", () => {

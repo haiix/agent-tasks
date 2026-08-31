@@ -103,6 +103,13 @@ interface TaskRow {
   readonly runnable: number;
 }
 
+class StoredTaskInvalidError extends Error {
+  constructor(cause: unknown) {
+    super("Stored task data is invalid.", { cause });
+    this.name = "StoredTaskInvalidError";
+  }
+}
+
 export interface TaskResult {
   readonly task: Task & { readonly runnable: boolean };
   readonly dependsOn: readonly string[];
@@ -523,24 +530,28 @@ function assertDependencyCanBeAdded(
 }
 
 function rowToTask(row: TaskRow): Task & { readonly runnable: boolean } {
-  const task = validateTask({
-    id: row.id,
-    title: row.title,
-    description: row.description,
-    status: row.status,
-    priority: row.priority,
-    assignee: row.assignee,
-    blockedReason: row.blocked_reason,
-    result: row.result,
-    labels: JSON.parse(row.labels_json) as unknown,
-    metadata: JSON.parse(row.metadata_json) as unknown,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-    version: row.version,
-  });
-  return { ...task, runnable: row.runnable === 1 };
+  try {
+    const task = validateTask({
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      status: row.status,
+      priority: row.priority,
+      assignee: row.assignee,
+      blockedReason: row.blocked_reason,
+      result: row.result,
+      labels: JSON.parse(row.labels_json) as unknown,
+      metadata: JSON.parse(row.metadata_json) as unknown,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      version: row.version,
+    });
+    return { ...task, runnable: row.runnable === 1 };
+  } catch (error) {
+    throw new StoredTaskInvalidError(error);
+  }
 }
 
 interface CursorPayload {
@@ -604,6 +615,14 @@ function withDatabase<T>(
     verifyDatabaseSchema(database, dbPath);
     return operation(database);
   } catch (error) {
+    if (error instanceof StoredTaskInvalidError) {
+      throw new StorageError(
+        "DB_INVALID",
+        "Stored task data is invalid.",
+        dbPath,
+        error,
+      );
+    }
     if (
       error instanceof TaskNotFoundError ||
       error instanceof VersionConflictError ||

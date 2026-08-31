@@ -61,6 +61,7 @@ npm run dev -- export
 - [アーキテクチャと保存方式](documents/architecture.md)
 - [SQLiteスキーマとマイグレーション](documents/database.md)
 - [CLI仕様](documents/cli-spec.md)
+- [AIエージェント向けCLI利用プロンプト](documents/agent-cli-prompt.md)
 - [タスクモデルとライフサイクル](documents/task-model.md)
 - [開発環境と配布方式](documents/development.md)
 

@@ -3,7 +3,7 @@
 `agent-tasks`は、プロジェクト内で作業するAIエージェント向けのローカルタスク管理CLIです。サーバーや外部サービスを必要とせず、タスクの作成、検索、claim、状態遷移を機械処理しやすいインターフェースで提供します。
 
 > [!NOTE]
-> このプロジェクトは開発中です。現在はデータベース初期化など、一部のCLI機能だけが実装されています。
+> このプロジェクトは開発中です。現在はデータベース初期化とタスクの作成、取得、一覧、内容更新が利用できます。
 
 ## 開発
 
@@ -25,6 +25,17 @@ npm run dev -- init
 ```
 
 保存先は`--db <path>`または環境変数`AGENT_TASKS_DB`でも指定でき、`--db`が優先される。
+
+タスクを作成し、取得・一覧・更新する例を次に示す。コマンドの成功・失敗は公開JSON仕様に従ってstdoutへ出力される。
+
+```shell
+npm run dev -- create --input-json '{"title":"Implement parser","priority":"high"}'
+npm run dev -- get --id <task-id>
+npm run dev -- list --status pending --limit 20
+npm run dev -- update --id <task-id> --expected-version 1 --input-json '{"labels":["cli"]}'
+```
+
+シェルの引用やコマンドライン長の影響を避ける場合は、`--input-json -`を指定して標準入力からJSONを渡す。
 
 ## 目的
 

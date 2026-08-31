@@ -20,6 +20,13 @@ interface MigrationRow {
   readonly checksum: string;
 }
 
+interface SchemaRow {
+  readonly type: string;
+  readonly name: string;
+  readonly table_name: string;
+  readonly sql: string | null;
+}
+
 export interface InitializeDatabaseResult {
   readonly schemaVersion: number;
   readonly created: boolean;
@@ -101,6 +108,8 @@ export function applyMigrations(
           now(),
         );
     }
+
+    validateDatabaseSchemaStructure(database, migrations, dbPath);
   });
 
   return migrations.at(-1)?.version ?? 0;
@@ -152,6 +161,81 @@ function validateAppliedMigrations(
   }
 }
 
+export function verifyDatabaseSchema(
+  database: DatabaseSync,
+  dbPath: string,
+): void {
+  try {
+    validateAppliedMigrations(database, MIGRATIONS, dbPath);
+    if (getMigration(database, LATEST_SCHEMA_VERSION) === undefined) {
+      throw new StorageError(
+        "DB_INVALID",
+        "The database schema is not initialized to the required version.",
+        dbPath,
+      );
+    }
+    validateDatabaseSchemaStructure(database, MIGRATIONS, dbPath);
+  } catch (error) {
+    if (error instanceof StorageError) throw error;
+    throw new StorageError(
+      "DB_INVALID",
+      "The database schema is invalid.",
+      dbPath,
+      error,
+    );
+  }
+}
+
+function validateDatabaseSchemaStructure(
+  database: DatabaseSync,
+  migrations: readonly Migration[],
+  dbPath: string,
+): void {
+  const actual = readSchema(database);
+  const expectedDatabase = new DatabaseSync(":memory:");
+  let expected: readonly SchemaRow[];
+  try {
+    expectedDatabase.exec(SCHEMA_MIGRATIONS_SQL);
+    for (const migration of migrations) {
+      executeMigration(expectedDatabase, migration);
+    }
+    expected = readSchema(expectedDatabase);
+  } finally {
+    expectedDatabase.close();
+  }
+
+  if (
+    actual.length !== expected.length ||
+    actual.some((row, index) => {
+      const expectedRow = expected[index];
+      return (
+        expectedRow === undefined ||
+        row.type !== expectedRow.type ||
+        row.name !== expectedRow.name ||
+        row.table_name !== expectedRow.table_name ||
+        row.sql !== expectedRow.sql
+      );
+    })
+  ) {
+    throw new StorageError(
+      "DB_INVALID",
+      "The database schema does not match the applied migration history.",
+      dbPath,
+    );
+  }
+}
+
+function readSchema(database: DatabaseSync): readonly SchemaRow[] {
+  return database
+    .prepare(
+      `SELECT type, name, tbl_name AS table_name, sql
+       FROM sqlite_schema
+       WHERE name NOT LIKE 'sqlite_%'
+       ORDER BY type, name`,
+    )
+    .all() as unknown as SchemaRow[];
+}
+
 function validateMigrationRow(
   row: MigrationRow,
   migration: Migration,
@@ -191,7 +275,7 @@ function runTransaction(database: DatabaseSync, operation: () => void): void {
   }
 }
 
-function toStorageError(error: unknown, dbPath: string): StorageError {
+export function toStorageError(error: unknown, dbPath: string): StorageError {
   if (error instanceof StorageError) return error;
   const sqliteCode = getErrorCode(error);
   const sqliteErrorNumber = getSqlitePrimaryErrorNumber(error);

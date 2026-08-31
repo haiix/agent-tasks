@@ -329,6 +329,56 @@ void describe("history, export, and text output", () => {
     assert.equal(get.stdout.startsWith("{"), false);
   });
 
+  void test("escapes control characters in every text output", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({
+      title: "Line\nTabbed\t\u001b[31mC1\u0085end",
+      description: "carriage\rreturn\u0000",
+      metadata: { note: "CSI\u009b31m" },
+    });
+    const taskId = created.data.task.id as string;
+    fixture.run([
+      "claim",
+      "--id",
+      taskId,
+      "--agent",
+      "agent\u001b[2J\tfake",
+      "--expected-version",
+      "1",
+    ]);
+
+    const get = runRaw(fixture.dbPath, [
+      "get",
+      "--id",
+      taskId,
+      "--format",
+      "text",
+    ]);
+    const list = runRaw(fixture.dbPath, ["list", "--format", "text"]);
+    const history = runRaw(fixture.dbPath, [
+      "history",
+      "--id",
+      taskId,
+      "--format",
+      "text",
+    ]);
+
+    assert.match(
+      get.stdout,
+      /^Title: Line\\nTabbed\\t\\u\{001B\}\[31mC1\\u\{0085\}end$/m,
+    );
+    assert.match(get.stdout, /^Description: carriage\\rreturn\\u\{0000\}$/m);
+    assert.match(
+      list.stdout,
+      /\tagent\\u\{001B\}\[2J\\tfake\tno\tLine\\nTabbed/,
+    );
+    assert.match(history.stdout, /\tagent\\u\{001B\}\[2J\\tfake\t1->2\t/);
+    assert.match(history.stdout, /CSI\\u\{009B\}31m/);
+    for (const output of [get.stdout, list.stdout, history.stdout]) {
+      assert.equal(hasUnsafeControlCharacter(output), false);
+    }
+  });
+
   void test("keeps errors as JSON when text output is requested", () => {
     const fixture = initializedDatabase();
     const result = runRaw(fixture.dbPath, [
@@ -646,6 +696,14 @@ function runRaw(
     },
   });
   return { exitCode: result.exitCode, stdout };
+}
+
+function hasUnsafeControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    if (character === "\n" || character === "\t") return false;
+    const codePoint = character.charCodeAt(0);
+    return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+  });
 }
 
 function initializedDatabase(): {

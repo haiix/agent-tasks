@@ -553,14 +553,18 @@ function formatText(command: "get" | "list" | "history", data: object): string {
     const result = data as ReturnType<typeof getTask>;
     const task = result.task;
     return [
-      `ID: ${task.id}`,
-      `Title: ${task.title}`,
-      `Status: ${task.status}`,
-      `Priority: ${task.priority}`,
-      `Assignee: ${task.assignee ?? "-"}`,
+      `ID: ${escapeTextField(task.id)}`,
+      `Title: ${escapeTextField(task.title)}`,
+      `Status: ${escapeTextField(task.status)}`,
+      `Priority: ${escapeTextField(task.priority)}`,
+      `Assignee: ${escapeTextField(task.assignee ?? "-")}`,
       `Runnable: ${task.runnable ? "yes" : "no"}`,
-      `Depends on: ${result.dependsOn.join(", ") || "-"}`,
-      `Description: ${task.description || "-"}`,
+      `Depends on: ${
+        result.dependsOn.length === 0
+          ? "-"
+          : result.dependsOn.map(escapeTextField).join(", ")
+      }`,
+      `Description: ${escapeTextField(task.description || "-")}`,
       "",
     ].join("\n");
   }
@@ -568,12 +572,12 @@ function formatText(command: "get" | "list" | "history", data: object): string {
     const result = data as ReturnType<typeof listTasks>;
     const rows = result.tasks.map((task) =>
       [
-        task.id,
-        task.status,
-        task.priority,
-        task.assignee ?? "-",
+        escapeTextField(task.id),
+        escapeTextField(task.status),
+        escapeTextField(task.priority),
+        escapeTextField(task.assignee ?? "-"),
         task.runnable ? "yes" : "no",
-        task.title,
+        escapeTextField(task.title),
       ].join("\t"),
     );
     return [
@@ -581,18 +585,18 @@ function formatText(command: "get" | "list" | "history", data: object): string {
       ...rows,
       ...(result.nextCursor === null
         ? []
-        : [`Next cursor: ${result.nextCursor}`]),
+        : [`Next cursor: ${escapeTextField(result.nextCursor)}`]),
       "",
     ].join("\n");
   }
   const result = data as ReturnType<typeof getTaskHistory>;
   const rows = result.events.map((event) =>
     [
-      event.occurredAt,
-      event.type,
-      event.actor ?? "-",
+      escapeTextField(event.occurredAt),
+      escapeTextField(event.type),
+      escapeTextField(event.actor ?? "-"),
       `${event.fromVersion ?? "-"}->${event.toVersion}`,
-      JSON.stringify(event.details),
+      escapeTextField(JSON.stringify(event.details)),
     ].join("\t"),
   );
   return [
@@ -600,9 +604,30 @@ function formatText(command: "get" | "list" | "history", data: object): string {
     ...rows,
     ...(result.nextCursor === null
       ? []
-      : [`Next cursor: ${result.nextCursor}`]),
+      : [`Next cursor: ${escapeTextField(result.nextCursor)}`]),
     "",
   ].join("\n");
+}
+
+function escapeTextField(value: string): string {
+  let escaped = "";
+  for (const character of value) {
+    const codePoint = character.charCodeAt(0);
+    if (codePoint > 0x1f && (codePoint < 0x7f || codePoint > 0x9f)) {
+      escaped += character;
+      continue;
+    }
+    if (character === "\n") escaped += "\\n";
+    else if (character === "\r") escaped += "\\r";
+    else if (character === "\t") escaped += "\\t";
+    else if (character === "\b") escaped += "\\b";
+    else if (character === "\f") escaped += "\\f";
+    else {
+      const hexadecimal = codePoint.toString(16).toUpperCase().padStart(4, "0");
+      escaped += `\\u{${hexadecimal}}`;
+    }
+  }
+  return escaped;
 }
 function writeSuccess(io: CliIo, data: object): CliResult {
   io.writeStdout(`${JSON.stringify({ ok: true, data })}\n`);

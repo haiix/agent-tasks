@@ -95,6 +95,16 @@ export function validateCreateTaskInput(value: unknown): CreateTaskInput {
   };
 }
 
+export function validateTaskDependencies(value: unknown): readonly string[] {
+  const issues = new IssueCollector();
+  const dependencies = validateStringArray(value, "dependsOn", issues, {
+    maxItems: TASK_LIMITS.dependencies,
+    maxCharacters: TASK_LIMITS.identifierCharacters,
+  });
+  issues.throwIfAny();
+  return dependencies;
+}
+
 export function validateUpdateTaskInput(value: unknown): UpdateTaskInput {
   const issues = new IssueCollector();
   const input = requireObject(value, "", issues);
@@ -340,6 +350,9 @@ function validateString(
     issues.add(path, "type", "Expected a string.");
     return undefined;
   }
+  if (!isWellFormedUnicode(value)) {
+    issues.add(path, "unicode", "Value must be well-formed Unicode.");
+  }
   if (options.nonBlank === true && value.trim().length === 0) {
     issues.add(path, "blank", "Value must not be blank.");
   }
@@ -351,6 +364,10 @@ function validateString(
     );
   }
   return value;
+}
+
+export function isWellFormedUnicode(value: string): boolean {
+  return value.isWellFormed();
 }
 
 function validateNullableString(

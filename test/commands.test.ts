@@ -169,6 +169,93 @@ void describe("create/get/update commands", () => {
     assert.equal(result.error?.code, "DB_INVALID");
     assert.deepEqual(result.error?.details, { dbPath: fixture.dbPath });
   });
+
+  void test("reports invalid stored task data as DB_INVALID", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({ title: "Stored task" });
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      database
+        .prepare("UPDATE tasks SET labels_json = ? WHERE id = ?")
+        .run(
+          JSON.stringify(Array.from({ length: 51 }, (_, index) => `l${index}`)),
+          created.data.task.id as string,
+        );
+    } finally {
+      database.close();
+    }
+
+    const result = fixture.run(["get", "--id", created.data.task.id as string]);
+    assert.equal(result.exitCode, 5);
+    assert.deepEqual(result.error, {
+      code: "DB_INVALID",
+      message: "Stored task data is invalid.",
+      details: { dbPath: fixture.dbPath },
+    });
+
+    const dependency = fixture.create({ title: "Dependency" });
+    const dependent = fixture.create({
+      title: "Dependent",
+      dependsOn: [dependency.data.task.id],
+    });
+    const invalidDependencyId = "x".repeat(201);
+    const dependencyDatabase = new DatabaseSync(fixture.dbPath);
+    try {
+      dependencyDatabase.exec("PRAGMA foreign_keys = OFF");
+      dependencyDatabase
+        .prepare(
+          "UPDATE task_dependencies SET depends_on = ? WHERE task_id = ?",
+        )
+        .run(invalidDependencyId, dependent.data.task.id as string);
+    } finally {
+      dependencyDatabase.close();
+    }
+
+    const invalidDependency = fixture.run([
+      "get",
+      "--id",
+      dependent.data.task.id as string,
+    ]);
+    assert.equal(invalidDependency.exitCode, 5);
+    assert.deepEqual(invalidDependency.error, {
+      code: "DB_INVALID",
+      message: "Stored task data is invalid.",
+      details: { dbPath: fixture.dbPath },
+    });
+  });
+
+  void test("rejects isolated UTF-16 surrogates before writing to SQLite", () => {
+    const fixture = initializedDatabase();
+    const result = fixture.run([
+      "create",
+      "--input-json",
+      JSON.stringify({ title: "Invalid \ud800" }),
+    ]);
+    assert.equal(result.exitCode, 2);
+    assert.deepEqual(result.error, {
+      code: "VALIDATION_ERROR",
+      message: "Input validation failed.",
+      details: {
+        issues: [
+          {
+            path: "title",
+            code: "unicode",
+            message: "Value must be well-formed Unicode.",
+          },
+        ],
+      },
+    });
+
+    const database = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(
+        database.prepare("SELECT count(*) AS count FROM tasks").get()?.count,
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
 });
 
 void describe("list command", () => {
@@ -248,6 +335,200 @@ void describe("list command", () => {
     assert.equal(conflicting.error?.code, "INVALID_ARGUMENT");
   });
 });
+
+void describe("task dependencies", () => {
+  void test("adds and removes dependencies with versioned events", () => {
+    const fixture = initializedDatabase();
+    const dependency = fixture.create({ title: "Dependency" });
+    const dependent = fixture.create({ title: "Dependent" });
+
+    const added = fixture.run([
+      "dependency-add",
+      "--id",
+      dependent.data.task.id as string,
+      "--depends-on",
+      dependency.data.task.id as string,
+      "--expected-version",
+      "1",
+    ]);
+    assert.equal(added.exitCode, 0);
+    assert.equal(added.data.task.version, 2);
+    assert.equal(added.data.task.runnable, false);
+    assert.deepEqual(added.data.dependsOn, [dependency.data.task.id]);
+
+    const removed = fixture.run([
+      "dependency-remove",
+      "--id",
+      dependent.data.task.id as string,
+      "--depends-on",
+      dependency.data.task.id as string,
+      "--expected-version",
+      "2",
+    ]);
+    assert.equal(removed.exitCode, 0);
+    assert.equal(removed.data.task.version, 3);
+    assert.equal(removed.data.task.runnable, true);
+    assert.deepEqual(removed.data.dependsOn, []);
+
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      const events = database
+        .prepare(
+          "SELECT type, details_json FROM task_events WHERE task_id = ? ORDER BY to_version",
+        )
+        .all(dependent.data.task.id as string) as unknown as Array<
+        Record<string, unknown>
+      >;
+      assert.deepEqual(
+        events.map((event) => ({
+          type: event.type,
+          details: JSON.parse(event.details_json as string) as unknown,
+        })),
+        [
+          { type: "created", details: dependent.data },
+          {
+            type: "dependencyAdded",
+            details: { dependsOn: dependency.data.task.id },
+          },
+          {
+            type: "dependencyRemoved",
+            details: { dependsOn: dependency.data.task.id },
+          },
+        ],
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  void test("rejects self, duplicate, cyclic, missing, and stale changes", () => {
+    const fixture = initializedDatabase();
+    const first = fixture.create({ title: "First" });
+    const second = fixture.create({
+      title: "Second",
+      dependsOn: [first.data.task.id],
+    });
+    const third = fixture.create({
+      title: "Third",
+      dependsOn: [second.data.task.id],
+    });
+
+    const conflicts = [
+      {
+        args: [first.data.task.id, first.data.task.id, "self"],
+      },
+      {
+        args: [second.data.task.id, first.data.task.id, "duplicate"],
+      },
+      {
+        args: [first.data.task.id, third.data.task.id, "cycle"],
+      },
+    ];
+    for (const conflict of conflicts) {
+      const [taskId, dependsOn, reason] = conflict.args as string[];
+      const result = fixture.run([
+        "dependency-add",
+        "--id",
+        taskId as string,
+        "--depends-on",
+        dependsOn as string,
+        "--expected-version",
+        "1",
+      ]);
+      assert.equal(result.exitCode, 4);
+      assert.deepEqual(result.error, {
+        code: "DEPENDENCY_CONFLICT",
+        message: "The dependency conflicts with the existing dependency graph.",
+        details: { taskId, dependsOn, reason },
+      });
+    }
+
+    const missing = fixture.run([
+      "dependency-remove",
+      "--id",
+      first.data.task.id as string,
+      "--depends-on",
+      second.data.task.id as string,
+      "--expected-version",
+      "1",
+    ]);
+    assert.equal(missing.exitCode, 3);
+    assert.equal(missing.error?.code, "DEPENDENCY_NOT_FOUND");
+
+    const stale = fixture.run([
+      "dependency-remove",
+      "--id",
+      second.data.task.id as string,
+      "--depends-on",
+      first.data.task.id as string,
+      "--expected-version",
+      "2",
+    ]);
+    assert.equal(stale.exitCode, 4);
+    assert.equal(stale.error?.code, "VERSION_CONFLICT");
+  });
+
+  void test("derives runnable across multiple levels and after reopening a dependency", () => {
+    const fixture = initializedDatabase();
+    const foundation = fixture.create({ title: "Foundation" });
+    const middle = fixture.create({
+      title: "Middle",
+      dependsOn: [foundation.data.task.id],
+    });
+    const top = fixture.create({
+      title: "Top",
+      dependsOn: [middle.data.task.id],
+    });
+
+    assert.deepEqual(runnableIds(fixture.run(["list", "--runnable"])), [
+      foundation.data.task.id,
+    ]);
+
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      markDone(database, foundation.data.task.id as string);
+      assert.deepEqual(runnableIds(fixture.run(["list", "--runnable"])), [
+        middle.data.task.id,
+      ]);
+      markDone(database, middle.data.task.id as string);
+      assert.deepEqual(runnableIds(fixture.run(["list", "--runnable"])), [
+        top.data.task.id,
+      ]);
+
+      database
+        .prepare(
+          `UPDATE tasks SET status = 'pending', assignee = NULL, result = NULL,
+           started_at = NULL, completed_at = NULL WHERE id = ?`,
+        )
+        .run(middle.data.task.id as string);
+      assert.deepEqual(runnableIds(fixture.run(["list", "--runnable"])), [
+        middle.data.task.id,
+      ]);
+      assert.equal(
+        fixture.run(["get", "--id", top.data.task.id as string]).data.task
+          .runnable,
+        false,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+function runnableIds(result: Captured): readonly unknown[] {
+  return (result.data.tasks as Array<Record<string, unknown>>).map(
+    (task) => task.id,
+  );
+}
+
+function markDone(database: DatabaseSync, taskId: string): void {
+  database
+    .prepare(
+      `UPDATE tasks SET status = 'done', assignee = 'test-agent', result = 'done',
+       started_at = created_at, completed_at = updated_at WHERE id = ?`,
+    )
+    .run(taskId);
+}
 
 interface Captured {
   readonly exitCode: number;

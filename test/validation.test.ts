@@ -6,6 +6,7 @@ import {
   TASK_LIMITS,
   validateCreateTaskInput,
   validateTask,
+  validateTaskDependencies,
   validateTransitionInput,
   validateUpdateTaskInput,
 } from "../src/validation/task.ts";
@@ -99,6 +100,22 @@ void describe("create input validation", () => {
     assert.equal(issues[0]?.code, "too_long");
   });
 
+  void test("rejects isolated UTF-16 surrogates", () => {
+    const issues = validationIssues(() =>
+      validateCreateTaskInput({
+        title: "Invalid \ud800",
+        description: "Invalid \udfff",
+      }),
+    );
+    assert.deepEqual(
+      issues.map(({ path, code }) => ({ path, code })),
+      [
+        { path: "description", code: "unicode" },
+        { path: "title", code: "unicode" },
+      ],
+    );
+  });
+
   void test("rejects oversized and non-JSON metadata", () => {
     const oversized = validationIssues(() =>
       validateCreateTaskInput({
@@ -120,6 +137,23 @@ void describe("create input validation", () => {
       message: "Number must be finite.",
     });
   });
+});
+
+void test("validates stored dependency identifiers", () => {
+  assert.deepEqual(validateTaskDependencies(["task-b", "task-a"]), [
+    "task-a",
+    "task-b",
+  ]);
+  const issues = validationIssues(() =>
+    validateTaskDependencies(["x".repeat(201), "Invalid \ud800"]),
+  );
+  assert.deepEqual(
+    issues.map(({ path, code }) => ({ path, code })),
+    [
+      { path: "dependsOn[0]", code: "too_long" },
+      { path: "dependsOn[1]", code: "unicode" },
+    ],
+  );
 });
 
 void describe("update and transition input validation", () => {

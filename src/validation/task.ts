@@ -95,6 +95,16 @@ export function validateCreateTaskInput(value: unknown): CreateTaskInput {
   };
 }
 
+export function validateTaskDependencies(value: unknown): readonly string[] {
+  const issues = new IssueCollector();
+  const dependencies = validateStringArray(value, "dependsOn", issues, {
+    maxItems: TASK_LIMITS.dependencies,
+    maxCharacters: TASK_LIMITS.identifierCharacters,
+  });
+  issues.throwIfAny();
+  return dependencies;
+}
+
 export function validateUpdateTaskInput(value: unknown): UpdateTaskInput {
   const issues = new IssueCollector();
   const input = requireObject(value, "", issues);

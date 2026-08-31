@@ -192,6 +192,36 @@ void describe("create/get/update commands", () => {
       message: "Stored task data is invalid.",
       details: { dbPath: fixture.dbPath },
     });
+
+    const dependency = fixture.create({ title: "Dependency" });
+    const dependent = fixture.create({
+      title: "Dependent",
+      dependsOn: [dependency.data.task.id],
+    });
+    const invalidDependencyId = "x".repeat(201);
+    const dependencyDatabase = new DatabaseSync(fixture.dbPath);
+    try {
+      dependencyDatabase.exec("PRAGMA foreign_keys = OFF");
+      dependencyDatabase
+        .prepare(
+          "UPDATE task_dependencies SET depends_on = ? WHERE task_id = ?",
+        )
+        .run(invalidDependencyId, dependent.data.task.id as string);
+    } finally {
+      dependencyDatabase.close();
+    }
+
+    const invalidDependency = fixture.run([
+      "get",
+      "--id",
+      dependent.data.task.id as string,
+    ]);
+    assert.equal(invalidDependency.exitCode, 5);
+    assert.deepEqual(invalidDependency.error, {
+      code: "DB_INVALID",
+      message: "Stored task data is invalid.",
+      details: { dbPath: fixture.dbPath },
+    });
   });
 
   void test("rejects isolated UTF-16 surrogates before writing to SQLite", () => {

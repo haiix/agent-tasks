@@ -6,6 +6,7 @@ import {
   TASK_LIMITS,
   validateCreateTaskInput,
   validateTask,
+  validateTaskDependencies,
   validateTransitionInput,
   validateUpdateTaskInput,
 } from "../src/validation/task.ts";
@@ -136,6 +137,23 @@ void describe("create input validation", () => {
       message: "Number must be finite.",
     });
   });
+});
+
+void test("validates stored dependency identifiers", () => {
+  assert.deepEqual(validateTaskDependencies(["task-b", "task-a"]), [
+    "task-a",
+    "task-b",
+  ]);
+  const issues = validationIssues(() =>
+    validateTaskDependencies(["x".repeat(201), "Invalid \ud800"]),
+  );
+  assert.deepEqual(
+    issues.map(({ path, code }) => ({ path, code })),
+    [
+      { path: "dependsOn[0]", code: "too_long" },
+      { path: "dependsOn[1]", code: "unicode" },
+    ],
+  );
 });
 
 void describe("update and transition input validation", () => {

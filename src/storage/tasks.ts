@@ -9,7 +9,11 @@ import type {
 } from "../domain/task.ts";
 import { DomainError, StorageError } from "../errors.ts";
 import { generateId } from "../id.ts";
-import { TASK_LIMITS, validateTask } from "../validation/task.ts";
+import {
+  TASK_LIMITS,
+  validateTask,
+  validateTaskDependencies,
+} from "../validation/task.ts";
 import {
   configureConnection,
   toStorageError,
@@ -400,10 +404,17 @@ function getTaskInDatabase(database: DatabaseSync, taskId: string): TaskResult {
       "SELECT depends_on FROM task_dependencies WHERE task_id = ? ORDER BY depends_on",
     )
     .all(taskId) as unknown as { depends_on: string }[];
-  return {
-    task: rowToTask(row),
-    dependsOn: dependencies.map((row) => row.depends_on),
-  };
+  try {
+    return {
+      task: rowToTask(row),
+      dependsOn: validateTaskDependencies(
+        dependencies.map((dependency) => dependency.depends_on),
+      ),
+    };
+  } catch (error) {
+    if (error instanceof StoredTaskInvalidError) throw error;
+    throw new StoredTaskInvalidError(error);
+  }
 }
 
 function requireTaskRow(database: DatabaseSync, taskId: string): void {

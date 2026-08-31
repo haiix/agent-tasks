@@ -392,6 +392,199 @@ void describe("history, export, and text output", () => {
     assert.equal(result.exitCode, 3);
     assert.equal(JSON.parse(result.stdout).error.code, "TASK_NOT_FOUND");
   });
+
+  void test("reports invalid stored history events as DB_INVALID", () => {
+    const corruptions: readonly Readonly<{
+      name: string;
+      values: Readonly<Record<string, string | number | null>>;
+    }>[] = [
+      {
+        name: "timestamp",
+        values: { occurred_at: "2026-01-02T03:04:05Z" },
+      },
+      {
+        name: "unsafe version",
+        values: {
+          type: "updated",
+          from_version: 9_007_199_254_740_991,
+          to_version: 9_007_199_254_740_992,
+          details_json: JSON.stringify({
+            changes: { title: { from: "before", to: "after" } },
+          }),
+        },
+      },
+      {
+        name: "history version gap",
+        values: {
+          type: "updated",
+          from_version: 5,
+          to_version: 6,
+          details_json: JSON.stringify({
+            changes: { title: { from: "before", to: "after" } },
+          }),
+        },
+      },
+      { name: "blank id", values: { id: " " } },
+      { name: "blank actor", values: { actor: " " } },
+      { name: "unexpected actor", values: { actor: "agent-a" } },
+      {
+        name: "missing actor",
+        values: {
+          type: "transitioned",
+          actor: null,
+          from_version: 1,
+          to_version: 2,
+          details_json: JSON.stringify({
+            fromStatus: "pending",
+            toStatus: "blocked",
+            blockedReason: "blocked",
+            result: null,
+          }),
+        },
+      },
+      {
+        name: "created details",
+        values: { details_json: JSON.stringify({ task: {}, dependsOn: [] }) },
+      },
+      {
+        name: "updated details",
+        values: {
+          type: "updated",
+          from_version: 1,
+          to_version: 2,
+          details_json: JSON.stringify({
+            changes: { status: { from: "pending", to: "done" } },
+          }),
+        },
+      },
+      {
+        name: "dependency details",
+        values: {
+          type: "dependencyAdded",
+          from_version: 1,
+          to_version: 2,
+          details_json: JSON.stringify({ dependsOn: "" }),
+        },
+      },
+      {
+        name: "claimed details",
+        values: {
+          type: "claimed",
+          actor: "agent-a",
+          from_version: 1,
+          to_version: 2,
+          details_json: JSON.stringify({
+            fromStatus: "pending",
+            toStatus: "in_progress",
+            assignee: "agent-b",
+          }),
+        },
+      },
+      {
+        name: "transitioned details",
+        values: {
+          type: "transitioned",
+          actor: "agent-a",
+          from_version: 1,
+          to_version: 2,
+          details_json: JSON.stringify({
+            fromStatus: "pending",
+            toStatus: "done",
+            blockedReason: null,
+            result: "done",
+          }),
+        },
+      },
+      {
+        name: "reopened details",
+        values: {
+          type: "reopened",
+          actor: "agent-a",
+          from_version: 1,
+          to_version: 2,
+          details_json: JSON.stringify({
+            fromStatus: "blocked",
+            toStatus: "pending",
+          }),
+        },
+      },
+    ];
+
+    for (const corruption of corruptions) {
+      const fixture = initializedDatabase();
+      const created = fixture.create({ title: `Corrupt ${corruption.name}` });
+      const taskId = created.data.task.id as string;
+      const database = new DatabaseSync(fixture.dbPath);
+      try {
+        database.exec("PRAGMA ignore_check_constraints = ON");
+        const assignments = Object.keys(corruption.values)
+          .map((column) => `${column} = ?`)
+          .join(", ");
+        database
+          .prepare(`UPDATE task_events SET ${assignments} WHERE task_id = ?`)
+          .run(...Object.values(corruption.values), taskId);
+      } finally {
+        database.close();
+      }
+
+      for (const args of [
+        ["history", "--id", taskId],
+        ["history", "--id", taskId, "--format", "text"],
+      ] as const) {
+        const result = runRaw(fixture.dbPath, args);
+        assert.equal(result.exitCode, 5, corruption.name);
+        assert.deepEqual(
+          JSON.parse(result.stdout).error,
+          {
+            code: "DB_INVALID",
+            message: "Stored task data is invalid.",
+            details: { dbPath: fixture.dbPath },
+          },
+          corruption.name,
+        );
+      }
+    }
+  });
+
+  void test("orders same-millisecond events by causal version", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({ title: "Same timestamp" });
+    const taskId = created.data.task.id as string;
+    fixture.run([
+      "update",
+      "--id",
+      taskId,
+      "--expected-version",
+      "1",
+      "--input-json",
+      JSON.stringify({ title: "Updated" }),
+    ]);
+
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      const occurredAt = database
+        .prepare(
+          "SELECT occurred_at AS occurredAt FROM task_events WHERE task_id = ? AND type = 'created'",
+        )
+        .get(taskId)?.occurredAt as string;
+      database
+        .prepare(
+          `UPDATE task_events SET occurred_at = ?, id = CASE type
+           WHEN 'created' THEN 'z-event' ELSE 'a-event' END WHERE task_id = ?`,
+        )
+        .run(occurredAt, taskId);
+    } finally {
+      database.close();
+    }
+
+    const history = fixture.run(["history", "--id", taskId]);
+    assert.deepEqual(
+      (history.data.events as Array<Record<string, unknown>>).map(
+        (event) => event.type,
+      ),
+      ["created", "updated"],
+    );
+  });
 });
 
 void describe("list command", () => {
@@ -672,6 +865,7 @@ interface Captured {
     readonly task: Record<string, unknown>;
     readonly dependsOn: readonly unknown[];
     readonly tasks: readonly Record<string, unknown>[];
+    readonly events: readonly Record<string, unknown>[];
     readonly dependencies: readonly Record<string, unknown>[];
     readonly schemaVersion: unknown;
     readonly exportedAt: unknown;

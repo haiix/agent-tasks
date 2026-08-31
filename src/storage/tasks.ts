@@ -20,6 +20,11 @@ import {
   validateTaskDependencies,
 } from "../validation/task.ts";
 import {
+  validateTaskEvent,
+  validateTaskEventHistory,
+  type ValidatedTaskEvent,
+} from "../validation/task-event.ts";
+import {
   configureConnection,
   toStorageError,
   verifyDatabaseSchema,
@@ -154,16 +159,7 @@ export interface ListResult {
   readonly nextCursor: string | null;
 }
 
-export interface TaskEvent {
-  readonly id: string;
-  readonly taskId: string;
-  readonly type: string;
-  readonly actor: string | null;
-  readonly occurredAt: string;
-  readonly fromVersion: number | null;
-  readonly toVersion: number;
-  readonly details: Readonly<Record<string, unknown>>;
-}
+export type TaskEvent = ValidatedTaskEvent;
 
 export interface HistoryResult {
   readonly events: readonly TaskEvent[];
@@ -660,41 +656,53 @@ export function getTaskHistory(
   cursor?: string,
 ): HistoryResult {
   return withDatabase(dbPath, (database) => {
-    requireTaskRow(database, taskId);
-    const after =
-      cursor === undefined
-        ? undefined
-        : decodeHistoryCursor(cursor, taskId, limit);
-    const rows = database
-      .prepare(
-        `SELECT id, task_id, type, actor, occurred_at, from_version, to_version,
-         details_json FROM task_events WHERE task_id = ?
-         ${after === undefined ? "" : "AND (occurred_at > ? OR (occurred_at = ? AND id > ?))"}
-         ORDER BY occurred_at, id LIMIT ?`,
-      )
-      .all(
-        taskId,
-        ...(after === undefined
-          ? [limit + 1]
-          : [after.occurredAt, after.occurredAt, after.id, limit + 1]),
-      ) as unknown as TaskEventRow[];
-    const hasMore = rows.length > limit;
-    const page = rows.slice(0, limit);
-    const events = page.map(rowToTaskEvent);
-    const last = page.at(-1);
-    return {
-      events,
-      nextCursor:
-        hasMore && last !== undefined
-          ? encodeHistoryCursor({
-              v: 1,
-              taskId,
-              limit,
-              occurredAt: last.occurred_at,
-              id: last.id,
-            })
-          : null,
-    };
+    try {
+      database.exec("BEGIN");
+      const taskVersion = requireTaskVersion(database, taskId);
+      const after =
+        cursor === undefined
+          ? undefined
+          : decodeHistoryCursor(cursor, taskId, limit);
+      const rows = database
+        .prepare(
+          `SELECT id, task_id, type, actor, occurred_at,
+           CAST(from_version AS REAL) AS from_version,
+           CAST(to_version AS REAL) AS to_version, details_json
+           FROM task_events WHERE task_id = ?
+           ORDER BY CAST(to_version AS REAL), id`,
+        )
+        .all(taskId) as unknown as TaskEventRow[];
+      const history = rows.map(rowToTaskEvent);
+      try {
+        validateTaskEventHistory(history, taskVersion);
+      } catch (error) {
+        throw new StoredTaskInvalidError(error);
+      }
+      const remaining =
+        after === undefined
+          ? history
+          : history.filter((event) => event.toVersion > after.toVersion);
+      const hasMore = remaining.length > limit;
+      const events = remaining.slice(0, limit);
+      const last = events.at(-1);
+      const result: HistoryResult = {
+        events,
+        nextCursor:
+          hasMore && last !== undefined
+            ? encodeHistoryCursor({
+                v: 1,
+                taskId,
+                limit,
+                toVersion: last.toVersion,
+              })
+            : null,
+      };
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
   });
 }
 
@@ -760,6 +768,14 @@ function requireTaskRow(database: DatabaseSync, taskId: string): void {
   ) {
     throw new TaskNotFoundError(taskId);
   }
+}
+
+function requireTaskVersion(database: DatabaseSync, taskId: string): number {
+  const row = database
+    .prepare("SELECT CAST(version AS REAL) AS version FROM tasks WHERE id = ?")
+    .get(taskId) as Readonly<{ version: number }> | undefined;
+  if (row === undefined) throw new TaskNotFoundError(taskId);
+  return row.version;
 }
 
 function assertExpectedVersion(
@@ -891,26 +907,20 @@ function insertTaskEvent(database: DatabaseSync, event: TaskEvent): void {
 }
 
 function rowToTaskEvent(row: TaskEventRow): TaskEvent {
-  const details = JSON.parse(row.details_json) as unknown;
-  if (
-    details === null ||
-    typeof details !== "object" ||
-    Array.isArray(details)
-  ) {
-    throw new StoredTaskInvalidError(
-      new Error("Event details must be an object."),
-    );
+  try {
+    return validateTaskEvent({
+      id: row.id,
+      taskId: row.task_id,
+      type: row.type,
+      actor: row.actor,
+      occurredAt: row.occurred_at,
+      fromVersion: row.from_version,
+      toVersion: row.to_version,
+      details: JSON.parse(row.details_json) as unknown,
+    });
+  } catch (error) {
+    throw new StoredTaskInvalidError(error);
   }
-  return {
-    id: row.id,
-    taskId: row.task_id,
-    type: row.type,
-    actor: row.actor,
-    occurredAt: row.occurred_at,
-    fromVersion: row.from_version,
-    toVersion: row.to_version,
-    details: details as Readonly<Record<string, unknown>>,
-  };
 }
 
 function changeTaskDependency(
@@ -1064,8 +1074,7 @@ interface HistoryCursorPayload {
   readonly v: 1;
   readonly taskId: string;
   readonly limit: number;
-  readonly occurredAt: string;
-  readonly id: string;
+  readonly toVersion: number;
 }
 
 function cursorSignature(filters: ListFilters): string {
@@ -1123,8 +1132,8 @@ function decodeHistoryCursor(
       payload.v !== 1 ||
       payload.taskId !== taskId ||
       payload.limit !== limit ||
-      typeof payload.occurredAt !== "string" ||
-      typeof payload.id !== "string" ||
+      !Number.isSafeInteger(payload.toVersion) ||
+      (payload.toVersion as number) < 1 ||
       encodeHistoryCursor(payload as HistoryCursorPayload) !== value
     ) {
       throw new CursorInvalidError();

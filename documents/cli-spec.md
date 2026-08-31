@@ -263,9 +263,9 @@ node taskctl.mjs reopen --id <task-id> --agent <agent-id> --expected-version <ve
 node taskctl.mjs history --id <task-id> [--limit <1..500>] [--cursor <cursor>]
 ```
 
-イベントを`occurredAt`昇順、同時刻では`id`昇順で返す。limitの既定値は100、最大値は500とする。cursorの規則は`list`と同じである。
+イベントを因果順序を表す`toVersion`昇順で返す。limitの既定値は100、最大値は500とする。cursorの規則は`list`と同じである。
 
-イベントは少なくとも次の共通プロパティを持つ。`actor`が不明または人によらない操作ならnullとし、`details`はイベント種別固有のJSON objectとする。
+イベントは少なくとも次の共通プロパティを持つ。`actor`は`created`、`updated`、`dependencyAdded`、`dependencyRemoved`ではnull、`claimed`、`transitioned`、`reopened`では操作したagent IDとする。`details`はイベント種別固有のJSON objectとする。
 
 ```json
 {

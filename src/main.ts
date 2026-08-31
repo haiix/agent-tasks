@@ -10,15 +10,20 @@ import { DomainError, StorageError } from "./errors.ts";
 import { initializeDatabase } from "./storage/database.ts";
 import {
   addTaskDependency,
+  claimTask,
   CursorInvalidError,
   createTask,
   DependencyConflictError,
   DependencyNotFoundError,
   getTask,
+  getTaskHistory,
   listTasks,
+  NotRunnableError,
+  reopenTask,
   removeTaskDependency,
   TaskNotFoundError,
   updateTask,
+  transitionTask,
   VersionConflictError,
 } from "./storage/tasks.ts";
 import {
@@ -30,6 +35,7 @@ import {
   TASK_LIMITS,
   isWellFormedUnicode,
   validateCreateTaskInput,
+  validateTransitionInput,
   validateUpdateTaskInput,
 } from "./validation/task.ts";
 
@@ -48,6 +54,10 @@ type Command =
   | "get"
   | "list"
   | "update"
+  | "claim"
+  | "transition"
+  | "reopen"
+  | "history"
   | "dependency-add"
   | "dependency-remove";
 type Format = "json" | "text";
@@ -57,6 +67,10 @@ const COMMANDS: readonly Command[] = [
   "get",
   "list",
   "update",
+  "claim",
+  "transition",
+  "reopen",
+  "history",
   "dependency-add",
   "dependency-remove",
 ];
@@ -73,7 +87,12 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
   try {
     const parsed = parseOptions(command as Command, args.slice(1));
     const format = parseFormat(parsed.values.get("--format"));
-    if (format === "text" && command !== "get" && command !== "list") {
+    if (
+      format === "text" &&
+      command !== "get" &&
+      command !== "list" &&
+      command !== "history"
+    ) {
       throw new CliFailure(
         "UNSUPPORTED_FORMAT",
         `The ${command} command does not support text output.`,
@@ -146,6 +165,64 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
           updateTask(dbPath, taskId, expectedVersion, input),
         );
       }
+      case "claim": {
+        const taskId = requiredIdentifier(parsed, "--id");
+        const agent = requiredIdentifier(parsed, "--agent");
+        const expectedVersion = requiredInteger(
+          parsed,
+          "--expected-version",
+          1,
+        );
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
+        return writeSuccess(
+          io,
+          claimTask(dbPath, taskId, agent, expectedVersion),
+        );
+      }
+      case "transition": {
+        const taskId = requiredIdentifier(parsed, "--id");
+        const to = requiredEnum(parsed, "--to", TASK_STATUSES) as TaskStatus;
+        const agent = requiredIdentifier(parsed, "--agent");
+        const expectedVersion = requiredInteger(
+          parsed,
+          "--expected-version",
+          1,
+        );
+        const input = validateTransitionInput(
+          to,
+          parsed.values.has("--input-json") ? readJson(parsed, io) : undefined,
+        );
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
+        return writeSuccess(
+          io,
+          transitionTask(dbPath, taskId, to, agent, expectedVersion, input),
+        );
+      }
+      case "reopen": {
+        const taskId = requiredIdentifier(parsed, "--id");
+        const agent = requiredIdentifier(parsed, "--agent");
+        const expectedVersion = requiredInteger(
+          parsed,
+          "--expected-version",
+          1,
+        );
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
+        return writeSuccess(
+          io,
+          reopenTask(dbPath, taskId, agent, expectedVersion),
+        );
+      }
+      case "history": {
+        const taskId = requiredIdentifier(parsed, "--id");
+        const limit = optionalInteger(parsed, "--limit", 100, 1, 500);
+        const cursor = parsed.values.get("--cursor");
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
+        return writeOutput(
+          io,
+          format,
+          getTaskHistory(dbPath, taskId, limit, cursor),
+        );
+      }
       case "dependency-add":
       case "dependency-remove": {
         const taskId = requiredIdentifier(parsed, "--id");
@@ -170,7 +247,13 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
     if (error instanceof CliFailure)
       return writeError(io, 2, error.code, error.message, error.details);
     if (error instanceof DomainError)
-      return writeError(io, 2, error.code, error.message, error.details);
+      return writeError(
+        io,
+        error.code === "STATE_CONFLICT" ? 4 : 2,
+        error.code,
+        error.message,
+        error.details,
+      );
     if (error instanceof CursorInvalidError)
       return writeError(io, 2, error.code, error.message, error.details);
     if (
@@ -182,6 +265,7 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
     }
     if (
       error instanceof VersionConflictError ||
+      error instanceof NotRunnableError ||
       error instanceof DependencyConflictError
     )
       return writeError(io, 4, error.code, error.message, error.details);
@@ -216,6 +300,18 @@ const VALUE_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
     "--cursor",
   ],
   update: ["--db", "--format", "--id", "--expected-version", "--input-json"],
+  claim: ["--db", "--format", "--id", "--agent", "--expected-version"],
+  transition: [
+    "--db",
+    "--format",
+    "--id",
+    "--to",
+    "--agent",
+    "--expected-version",
+    "--input-json",
+  ],
+  reopen: ["--db", "--format", "--id", "--agent", "--expected-version"],
+  history: ["--db", "--format", "--id", "--limit", "--cursor"],
   "dependency-add": [
     "--db",
     "--format",
@@ -236,6 +332,10 @@ const FLAG_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
   create: [],
   get: [],
   update: [],
+  claim: [],
+  transition: [],
+  reopen: [],
+  history: [],
   "dependency-add": [],
   "dependency-remove": [],
   list: ["--unassigned", "--runnable"],
@@ -381,6 +481,18 @@ function optionalEnum(
 ): string | undefined {
   const value = options.values.get(name);
   if (value !== undefined && !allowed.includes(value))
+    throw invalidArgument(name, value, "Invalid option value.");
+  return value;
+}
+function requiredEnum(
+  options: ParsedOptions,
+  name: string,
+  allowed: readonly string[],
+): string {
+  const value = options.values.get(name);
+  if (value === undefined)
+    throw invalidArgument(name, undefined, "A required option is missing.");
+  if (!allowed.includes(value))
     throw invalidArgument(name, value, "Invalid option value.");
   return value;
 }

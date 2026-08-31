@@ -5,8 +5,13 @@ import type {
   Priority,
   Task,
   TaskStatus,
+  TransitionInput,
   UpdateTaskInput,
 } from "../domain/task.ts";
+import {
+  assertAllowedTransition,
+  assertCanReopen,
+} from "../domain/transition.ts";
 import { DomainError, StorageError } from "../errors.ts";
 import { generateId } from "../id.ts";
 import {
@@ -43,6 +48,20 @@ export class VersionConflictError extends Error {
     super("Task was modified by another process.");
     this.name = "VersionConflictError";
     this.details = { taskId, expectedVersion, actualVersion };
+  }
+}
+
+export class NotRunnableError extends Error {
+  readonly code = "NOT_RUNNABLE";
+  readonly details: Readonly<{
+    taskId: string;
+    incompleteDependencyIds: readonly string[];
+  }>;
+
+  constructor(taskId: string, incompleteDependencyIds: readonly string[]) {
+    super("The task has incomplete dependencies and is not runnable.");
+    this.name = "NotRunnableError";
+    this.details = { taskId, incompleteDependencyIds };
   }
 }
 
@@ -133,6 +152,33 @@ export interface ListFilters {
 export interface ListResult {
   readonly tasks: readonly (Task & { readonly runnable: boolean })[];
   readonly nextCursor: string | null;
+}
+
+export interface TaskEvent {
+  readonly id: string;
+  readonly taskId: string;
+  readonly type: string;
+  readonly actor: string | null;
+  readonly occurredAt: string;
+  readonly fromVersion: number | null;
+  readonly toVersion: number;
+  readonly details: Readonly<Record<string, unknown>>;
+}
+
+export interface HistoryResult {
+  readonly events: readonly TaskEvent[];
+  readonly nextCursor: string | null;
+}
+
+interface TaskEventRow {
+  readonly id: string;
+  readonly task_id: string;
+  readonly type: string;
+  readonly actor: string | null;
+  readonly occurred_at: string;
+  readonly from_version: number | null;
+  readonly to_version: number;
+  readonly details_json: string;
 }
 
 const TASK_SELECT = `
@@ -284,6 +330,206 @@ export function updateTask(
   });
 }
 
+export function claimTask(
+  dbPath: string,
+  taskId: string,
+  agent: string,
+  expectedVersion: number,
+  options: {
+    readonly now?: () => string;
+    readonly generateId?: () => string;
+  } = {},
+): TaskResult {
+  return withDatabase(dbPath, (database) => {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const before = getTaskInDatabase(database, taskId);
+      assertExpectedVersion(before, expectedVersion);
+      assertStatus(taskId, before.task.status, ["pending"]);
+      assertRunnable(database, taskId);
+
+      const now = (options.now ?? (() => new Date().toISOString()))();
+      const updated = database
+        .prepare(
+          `UPDATE tasks SET status = 'in_progress', assignee = ?, started_at = ?,
+          updated_at = ?, version = version + 1
+          WHERE id = ? AND version = ? AND status = 'pending'`,
+        )
+        .run(agent, now, now, taskId, expectedVersion);
+      if (updated.changes !== 1) {
+        throw new StorageError(
+          "STORAGE_ERROR",
+          "The atomic claim update did not modify exactly one task.",
+          dbPath,
+        );
+      }
+      insertTaskEvent(database, {
+        id: (options.generateId ?? generateId)(),
+        taskId,
+        type: "claimed",
+        actor: agent,
+        occurredAt: now,
+        fromVersion: expectedVersion,
+        toVersion: expectedVersion + 1,
+        details: {
+          fromStatus: "pending",
+          toStatus: "in_progress",
+          assignee: agent,
+        },
+      });
+      const result = getTaskInDatabase(database, taskId);
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+
+export function transitionTask(
+  dbPath: string,
+  taskId: string,
+  to: TaskStatus,
+  agent: string,
+  expectedVersion: number,
+  input: TransitionInput,
+  options: {
+    readonly now?: () => string;
+    readonly generateId?: () => string;
+  } = {},
+): TaskResult {
+  return withDatabase(dbPath, (database) => {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const before = getTaskInDatabase(database, taskId);
+      assertExpectedVersion(before, expectedVersion);
+      try {
+        assertAllowedTransition(before.task.status, to);
+      } catch (error) {
+        throw withTaskId(error, taskId);
+      }
+      if (before.task.assignee !== null && before.task.assignee !== agent) {
+        throw new DomainError(
+          "STATE_CONFLICT",
+          "The task is assigned to another agent.",
+          { taskId, actualStatus: before.task.status },
+        );
+      }
+      if (to === "in_progress") assertRunnable(database, taskId);
+
+      const now = (options.now ?? (() => new Date().toISOString()))();
+      const next = transitionValues(before.task, to, agent, input, now);
+      const updated = database
+        .prepare(
+          `UPDATE tasks SET status = ?, assignee = ?, blocked_reason = ?, result = ?,
+          started_at = ?, completed_at = ?, updated_at = ?, version = version + 1
+          WHERE id = ? AND version = ? AND status = ?`,
+        )
+        .run(
+          to,
+          next.assignee,
+          next.blockedReason,
+          next.result,
+          next.startedAt,
+          next.completedAt,
+          now,
+          taskId,
+          expectedVersion,
+          before.task.status,
+        );
+      if (updated.changes !== 1) {
+        throw new StorageError(
+          "STORAGE_ERROR",
+          "The atomic transition update did not modify exactly one task.",
+          dbPath,
+        );
+      }
+      insertTaskEvent(database, {
+        id: (options.generateId ?? generateId)(),
+        taskId,
+        type: "transitioned",
+        actor: agent,
+        occurredAt: now,
+        fromVersion: expectedVersion,
+        toVersion: expectedVersion + 1,
+        details: {
+          fromStatus: before.task.status,
+          toStatus: to,
+          blockedReason: next.blockedReason,
+          result: next.result,
+        },
+      });
+      const result = getTaskInDatabase(database, taskId);
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+
+export function reopenTask(
+  dbPath: string,
+  taskId: string,
+  agent: string,
+  expectedVersion: number,
+  options: {
+    readonly now?: () => string;
+    readonly generateId?: () => string;
+  } = {},
+): TaskResult {
+  return withDatabase(dbPath, (database) => {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const before = getTaskInDatabase(database, taskId);
+      assertExpectedVersion(before, expectedVersion);
+      try {
+        assertCanReopen(before.task.status);
+      } catch (error) {
+        throw withTaskId(error, taskId);
+      }
+
+      const now = (options.now ?? (() => new Date().toISOString()))();
+      const updated = database
+        .prepare(
+          `UPDATE tasks SET status = 'pending', assignee = NULL, blocked_reason = NULL,
+          result = NULL, started_at = NULL, completed_at = NULL,
+          updated_at = ?, version = version + 1
+          WHERE id = ? AND version = ? AND status = ?`,
+        )
+        .run(now, taskId, expectedVersion, before.task.status);
+      if (updated.changes !== 1) {
+        throw new StorageError(
+          "STORAGE_ERROR",
+          "The atomic reopen update did not modify exactly one task.",
+          dbPath,
+        );
+      }
+      insertTaskEvent(database, {
+        id: (options.generateId ?? generateId)(),
+        taskId,
+        type: "reopened",
+        actor: agent,
+        occurredAt: now,
+        fromVersion: expectedVersion,
+        toVersion: expectedVersion + 1,
+        details: {
+          fromStatus: before.task.status,
+          toStatus: "pending",
+        },
+      });
+      const result = getTaskInDatabase(database, taskId);
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+
 export function addTaskDependency(
   dbPath: string,
   taskId: string,
@@ -395,6 +641,51 @@ export function listTasks(dbPath: string, filters: ListFilters): ListResult {
   });
 }
 
+export function getTaskHistory(
+  dbPath: string,
+  taskId: string,
+  limit: number,
+  cursor?: string,
+): HistoryResult {
+  return withDatabase(dbPath, (database) => {
+    requireTaskRow(database, taskId);
+    const after =
+      cursor === undefined
+        ? undefined
+        : decodeHistoryCursor(cursor, taskId, limit);
+    const rows = database
+      .prepare(
+        `SELECT id, task_id, type, actor, occurred_at, from_version, to_version,
+         details_json FROM task_events WHERE task_id = ?
+         ${after === undefined ? "" : "AND (occurred_at > ? OR (occurred_at = ? AND id > ?))"}
+         ORDER BY occurred_at, id LIMIT ?`,
+      )
+      .all(
+        taskId,
+        ...(after === undefined
+          ? [limit + 1]
+          : [after.occurredAt, after.occurredAt, after.id, limit + 1]),
+      ) as unknown as TaskEventRow[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const events = page.map(rowToTaskEvent);
+    const last = page.at(-1);
+    return {
+      events,
+      nextCursor:
+        hasMore && last !== undefined
+          ? encodeHistoryCursor({
+              v: 1,
+              taskId,
+              limit,
+              occurredAt: last.occurred_at,
+              id: last.id,
+            })
+          : null,
+    };
+  });
+}
+
 function getTaskInDatabase(database: DatabaseSync, taskId: string): TaskResult {
   const row = database.prepare(`${TASK_SELECT} WHERE t.id = ?`).get(taskId) as
     TaskRow | undefined;
@@ -424,6 +715,157 @@ function requireTaskRow(database: DatabaseSync, taskId: string): void {
   ) {
     throw new TaskNotFoundError(taskId);
   }
+}
+
+function assertExpectedVersion(
+  task: TaskResult,
+  expectedVersion: number,
+): void {
+  if (task.task.version !== expectedVersion) {
+    throw new VersionConflictError(
+      task.task.id,
+      expectedVersion,
+      task.task.version,
+    );
+  }
+}
+
+function assertStatus(
+  taskId: string,
+  actualStatus: TaskStatus,
+  allowedStatuses: readonly TaskStatus[],
+): void {
+  if (allowedStatuses.includes(actualStatus)) return;
+  throw new DomainError(
+    "STATE_CONFLICT",
+    "The task is not in a state allowed for this operation.",
+    { taskId, actualStatus, allowedStatuses },
+  );
+}
+
+function assertRunnable(database: DatabaseSync, taskId: string): void {
+  const incompleteDependencyIds = database
+    .prepare(
+      `SELECT d.depends_on FROM task_dependencies d
+       JOIN tasks dependency ON dependency.id = d.depends_on
+       WHERE d.task_id = ? AND dependency.status <> 'done'
+       ORDER BY d.depends_on`,
+    )
+    .all(taskId)
+    .map((row) => row.depends_on as string);
+  if (incompleteDependencyIds.length !== 0) {
+    throw new NotRunnableError(taskId, incompleteDependencyIds);
+  }
+}
+
+function withTaskId(error: unknown, taskId: string): unknown {
+  if (!(error instanceof DomainError) || error.code !== "STATE_CONFLICT") {
+    return error;
+  }
+  return new DomainError(error.code, error.message, {
+    taskId,
+    ...error.details,
+  });
+}
+
+function transitionValues(
+  before: Task,
+  to: TaskStatus,
+  agent: string,
+  input: TransitionInput,
+  now: string,
+): Pick<
+  Task,
+  "assignee" | "blockedReason" | "result" | "startedAt" | "completedAt"
+> {
+  if (to === "pending") {
+    return {
+      assignee: null,
+      blockedReason: null,
+      result: null,
+      startedAt: null,
+      completedAt: null,
+    };
+  }
+  if (to === "in_progress") {
+    return {
+      assignee: agent,
+      blockedReason: null,
+      result: null,
+      startedAt: now,
+      completedAt: null,
+    };
+  }
+  if (to === "blocked") {
+    return {
+      assignee: before.assignee,
+      blockedReason:
+        input !== undefined && "blockedReason" in input
+          ? input.blockedReason
+          : null,
+      result: null,
+      startedAt: before.startedAt,
+      completedAt: null,
+    };
+  }
+  if (to === "done") {
+    return {
+      assignee: before.assignee,
+      blockedReason: null,
+      result: input !== undefined && "result" in input ? input.result : null,
+      startedAt: before.startedAt,
+      completedAt: now,
+    };
+  }
+  return {
+    assignee: before.assignee,
+    blockedReason: null,
+    result: null,
+    startedAt: before.startedAt,
+    completedAt: now,
+  };
+}
+
+function insertTaskEvent(database: DatabaseSync, event: TaskEvent): void {
+  database
+    .prepare(
+      `INSERT INTO task_events (
+       id, task_id, type, actor, occurred_at, from_version, to_version, details_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      event.id,
+      event.taskId,
+      event.type,
+      event.actor,
+      event.occurredAt,
+      event.fromVersion,
+      event.toVersion,
+      JSON.stringify(event.details),
+    );
+}
+
+function rowToTaskEvent(row: TaskEventRow): TaskEvent {
+  const details = JSON.parse(row.details_json) as unknown;
+  if (
+    details === null ||
+    typeof details !== "object" ||
+    Array.isArray(details)
+  ) {
+    throw new StoredTaskInvalidError(
+      new Error("Event details must be an object."),
+    );
+  }
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    type: row.type,
+    actor: row.actor,
+    occurredAt: row.occurred_at,
+    fromVersion: row.from_version,
+    toVersion: row.to_version,
+    details: details as Readonly<Record<string, unknown>>,
+  };
 }
 
 function changeTaskDependency(
@@ -573,6 +1015,14 @@ interface CursorPayload {
   readonly id: string;
 }
 
+interface HistoryCursorPayload {
+  readonly v: 1;
+  readonly taskId: string;
+  readonly limit: number;
+  readonly occurredAt: string;
+  readonly id: string;
+}
+
 function cursorSignature(filters: ListFilters): string {
   return JSON.stringify({
     status: filters.status ?? null,
@@ -611,6 +1061,36 @@ function decodeCursor(value: string, signature: string): CursorPayload {
   }
 }
 
+function encodeHistoryCursor(payload: HistoryCursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeHistoryCursor(
+  value: string,
+  taskId: string,
+  limit: number,
+): HistoryCursorPayload {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(value, "base64url").toString("utf8"),
+    ) as Partial<HistoryCursorPayload>;
+    if (
+      payload.v !== 1 ||
+      payload.taskId !== taskId ||
+      payload.limit !== limit ||
+      typeof payload.occurredAt !== "string" ||
+      typeof payload.id !== "string" ||
+      encodeHistoryCursor(payload as HistoryCursorPayload) !== value
+    ) {
+      throw new CursorInvalidError();
+    }
+    return payload as HistoryCursorPayload;
+  } catch (error) {
+    if (error instanceof CursorInvalidError) throw error;
+    throw new CursorInvalidError();
+  }
+}
+
 function priorityRank(priority: Priority): number {
   return { urgent: 0, high: 1, normal: 2, low: 3 }[priority];
 }
@@ -637,6 +1117,7 @@ function withDatabase<T>(
     if (
       error instanceof TaskNotFoundError ||
       error instanceof VersionConflictError ||
+      error instanceof NotRunnableError ||
       error instanceof CursorInvalidError ||
       error instanceof DependencyNotFoundError ||
       error instanceof DependencyConflictError ||

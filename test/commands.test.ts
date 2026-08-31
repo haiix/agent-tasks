@@ -258,6 +258,142 @@ void describe("create/get/update commands", () => {
   });
 });
 
+void describe("history, export, and text output", () => {
+  void test("exports a stable snapshot ordered by task and dependency id", () => {
+    const fixture = initializedDatabase();
+    const dependency = fixture.create({ title: "Dependency" });
+    const dependent = fixture.create({
+      title: "Dependent",
+      dependsOn: [dependency.data.task.id],
+    });
+
+    const exported = fixture.run(["export"]);
+    const tasks = exported.data.tasks;
+    const dependencies = exported.data.dependencies;
+
+    assert.equal(exported.data.schemaVersion, 1);
+    assert.match(
+      exported.data.exportedAt as string,
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+    assert.deepEqual(
+      tasks.map((task) => task.id),
+      [...tasks.map((task) => task.id)].sort(),
+    );
+    assert.equal(
+      tasks.every((task) => typeof task.runnable === "boolean"),
+      true,
+    );
+    assert.deepEqual(dependencies, [
+      {
+        taskId: dependent.data.task.id,
+        dependsOn: dependency.data.task.id,
+      },
+    ]);
+  });
+
+  void test("renders minimal text for get, list, and history", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({ title: "Readable task" });
+    const taskId = created.data.task.id as string;
+
+    const get = runRaw(fixture.dbPath, [
+      "get",
+      "--id",
+      taskId,
+      "--format",
+      "text",
+    ]);
+    const list = runRaw(fixture.dbPath, ["list", "--format", "text"]);
+    const history = runRaw(fixture.dbPath, [
+      "history",
+      "--id",
+      taskId,
+      "--format",
+      "text",
+    ]);
+
+    assert.equal(get.exitCode, 0);
+    assert.match(get.stdout, new RegExp(`^ID: ${taskId}`, "m"));
+    assert.match(get.stdout, /^Title: Readable task$/m);
+    assert.match(
+      list.stdout,
+      /^ID\tSTATUS\tPRIORITY\tASSIGNEE\tRUNNABLE\tTITLE$/m,
+    );
+    assert.match(list.stdout, /\tpending\tnormal\t-\tyes\tReadable task$/m);
+    assert.match(
+      history.stdout,
+      /^OCCURRED_AT\tTYPE\tACTOR\tVERSION\tDETAILS$/m,
+    );
+    assert.match(history.stdout, /\tcreated\t-\t-->1\t/);
+    assert.equal(get.stdout.startsWith("{"), false);
+  });
+
+  void test("escapes control characters in every text output", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({
+      title: "Line\nTabbed\t\u001b[31mC1\u0085end",
+      description: "carriage\rreturn\u0000",
+      metadata: { note: "CSI\u009b31m" },
+    });
+    const taskId = created.data.task.id as string;
+    fixture.run([
+      "claim",
+      "--id",
+      taskId,
+      "--agent",
+      "agent\u001b[2J\tfake",
+      "--expected-version",
+      "1",
+    ]);
+
+    const get = runRaw(fixture.dbPath, [
+      "get",
+      "--id",
+      taskId,
+      "--format",
+      "text",
+    ]);
+    const list = runRaw(fixture.dbPath, ["list", "--format", "text"]);
+    const history = runRaw(fixture.dbPath, [
+      "history",
+      "--id",
+      taskId,
+      "--format",
+      "text",
+    ]);
+
+    assert.match(
+      get.stdout,
+      /^Title: Line\\nTabbed\\t\\u\{001B\}\[31mC1\\u\{0085\}end$/m,
+    );
+    assert.match(get.stdout, /^Description: carriage\\rreturn\\u\{0000\}$/m);
+    assert.match(
+      list.stdout,
+      /\tagent\\u\{001B\}\[2J\\tfake\tno\tLine\\nTabbed/,
+    );
+    assert.match(history.stdout, /\tagent\\u\{001B\}\[2J\\tfake\t1->2\t/);
+    assert.match(history.stdout, /CSI\\u\{009B\}31m/);
+    for (const output of [get.stdout, list.stdout, history.stdout]) {
+      assert.equal(hasUnsafeControlCharacter(output), false);
+    }
+  });
+
+  void test("keeps errors as JSON when text output is requested", () => {
+    const fixture = initializedDatabase();
+    const result = runRaw(fixture.dbPath, [
+      "get",
+      "--id",
+      "missing",
+      "--format",
+      "text",
+    ]);
+
+    assert.equal(result.exitCode, 3);
+    assert.equal(JSON.parse(result.stdout).error.code, "TASK_NOT_FOUND");
+  });
+});
+
 void describe("list command", () => {
   void test("filters tasks and orders them deterministically by priority and stable keys", () => {
     const fixture = initializedDatabase();
@@ -536,6 +672,9 @@ interface Captured {
     readonly task: Record<string, unknown>;
     readonly dependsOn: readonly unknown[];
     readonly tasks: readonly Record<string, unknown>[];
+    readonly dependencies: readonly Record<string, unknown>[];
+    readonly schemaVersion: unknown;
+    readonly exportedAt: unknown;
     readonly nextCursor: unknown;
   };
   readonly error?: {
@@ -543,6 +682,28 @@ interface Captured {
     readonly message: string;
     readonly details: Record<string, unknown>;
   };
+}
+
+function runRaw(
+  dbPath: string,
+  args: readonly string[],
+): { readonly exitCode: number; readonly stdout: string } {
+  let stdout = "";
+  const result = runCli([...args, "--db", dbPath], {
+    environment: {},
+    writeStdout(value) {
+      stdout += value;
+    },
+  });
+  return { exitCode: result.exitCode, stdout };
+}
+
+function hasUnsafeControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    if (character === "\n" || character === "\t") return false;
+    const codePoint = character.charCodeAt(0);
+    return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+  });
 }
 
 function initializedDatabase(): {

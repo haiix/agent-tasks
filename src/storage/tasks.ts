@@ -170,6 +170,18 @@ export interface HistoryResult {
   readonly nextCursor: string | null;
 }
 
+export interface TaskDependency {
+  readonly taskId: string;
+  readonly dependsOn: string;
+}
+
+export interface ExportResult {
+  readonly schemaVersion: 1;
+  readonly exportedAt: string;
+  readonly tasks: readonly (Task & { readonly runnable: boolean })[];
+  readonly dependencies: readonly TaskDependency[];
+}
+
 interface TaskEventRow {
   readonly id: string;
   readonly task_id: string;
@@ -683,6 +695,39 @@ export function getTaskHistory(
             })
           : null,
     };
+  });
+}
+
+export function exportTasks(
+  dbPath: string,
+  options: { readonly now?: () => string } = {},
+): ExportResult {
+  return withDatabase(dbPath, (database) => {
+    database.exec("BEGIN");
+    try {
+      const tasks = (
+        database
+          .prepare(`${TASK_SELECT} ORDER BY t.id`)
+          .all() as unknown as TaskRow[]
+      ).map(rowToTask);
+      const dependencies = database
+        .prepare(
+          `SELECT task_id AS taskId, depends_on AS dependsOn
+           FROM task_dependencies ORDER BY task_id, depends_on`,
+        )
+        .all() as unknown as TaskDependency[];
+      const result: ExportResult = {
+        schemaVersion: 1,
+        exportedAt: (options.now ?? (() => new Date().toISOString()))(),
+        tasks,
+        dependencies,
+      };
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
   });
 }
 

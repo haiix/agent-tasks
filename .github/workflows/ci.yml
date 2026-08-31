@@ -44,11 +44,11 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
-      - name: Test
-        run: npm test
-
       - name: Type-check
         run: npm run typecheck
 
       - name: Build
         run: npm run build
+
+      - name: Test
+        run: npm run test:run

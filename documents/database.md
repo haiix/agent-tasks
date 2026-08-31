@@ -57,7 +57,7 @@
 
 タスクの変更履歴を保存する。`id`を主キー、`task_id`を外部キーとし、イベント種別、操作主体、発生日時、変更前後のversion、種別固有のJSON objectを保持する。`created`イベントは`from_version = NULL`かつ`to_version = 1`、その他は`to_version = from_version + 1`とする。
 
-履歴順で取得するため、`idx_task_events_history(task_id, occurred_at, id)`を持つ。
+発生日時による検索を補助する`idx_task_events_history(task_id, occurred_at, id)`を持つ。公開する履歴は全イベントのversion連続性を検証したうえで、因果順序を表す`to_version`順に並べる。
 
 ### `schema_migrations`
 

@@ -66,6 +66,7 @@ export function validateTaskEvent(value: unknown): ValidatedTaskEvent {
   const taskId = requireIdentifier(event.taskId);
   const type = requireEventType(event.type);
   const actor = event.actor === null ? null : requireIdentifier(event.actor);
+  validateActor(type, actor);
   const occurredAt = requireTimestamp(event.occurredAt);
   const { fromVersion, toVersion } = requireVersions(
     type,
@@ -89,6 +90,23 @@ export function validateTaskEvent(value: unknown): ValidatedTaskEvent {
     toVersion,
     details,
   };
+}
+
+export function validateTaskEventHistory(
+  events: readonly ValidatedTaskEvent[],
+  taskVersion: unknown,
+): void {
+  if (!Number.isSafeInteger(taskVersion) || (taskVersion as number) < 1) {
+    throw new Error("Stored task version is invalid.");
+  }
+  if (events.length === 0 || events.at(-1)?.toVersion !== taskVersion) {
+    throw new Error("Event history does not reach the stored task version.");
+  }
+  for (const [index, event] of events.entries()) {
+    if (event.toVersion !== index + 1) {
+      throw new Error("Event history versions are not contiguous.");
+    }
+  }
 }
 
 function validateDetails(
@@ -245,6 +263,14 @@ function requireVersions(
     throw new Error("Event versions are inconsistent.");
   }
   return { fromVersion: fromValue as number, toVersion };
+}
+
+function validateActor(type: TaskEventType, actor: string | null): void {
+  const requiresActor =
+    type === "claimed" || type === "transitioned" || type === "reopened";
+  if ((actor !== null) !== requiresActor) {
+    throw new Error("Event actor is inconsistent with its type.");
+  }
 }
 
 function requireExactObject(

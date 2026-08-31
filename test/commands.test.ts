@@ -413,8 +413,35 @@ void describe("history, export, and text output", () => {
           }),
         },
       },
+      {
+        name: "history version gap",
+        values: {
+          type: "updated",
+          from_version: 5,
+          to_version: 6,
+          details_json: JSON.stringify({
+            changes: { title: { from: "before", to: "after" } },
+          }),
+        },
+      },
       { name: "blank id", values: { id: " " } },
       { name: "blank actor", values: { actor: " " } },
+      { name: "unexpected actor", values: { actor: "agent-a" } },
+      {
+        name: "missing actor",
+        values: {
+          type: "transitioned",
+          actor: null,
+          from_version: 1,
+          to_version: 2,
+          details_json: JSON.stringify({
+            fromStatus: "pending",
+            toStatus: "blocked",
+            blockedReason: "blocked",
+            result: null,
+          }),
+        },
+      },
       {
         name: "created details",
         values: { details_json: JSON.stringify({ task: {}, dependsOn: [] }) },
@@ -457,6 +484,7 @@ void describe("history, export, and text output", () => {
         name: "transitioned details",
         values: {
           type: "transitioned",
+          actor: "agent-a",
           from_version: 1,
           to_version: 2,
           details_json: JSON.stringify({
@@ -471,6 +499,7 @@ void describe("history, export, and text output", () => {
         name: "reopened details",
         values: {
           type: "reopened",
+          actor: "agent-a",
           from_version: 1,
           to_version: 2,
           details_json: JSON.stringify({
@@ -515,6 +544,46 @@ void describe("history, export, and text output", () => {
         );
       }
     }
+  });
+
+  void test("orders same-millisecond events by causal version", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({ title: "Same timestamp" });
+    const taskId = created.data.task.id as string;
+    fixture.run([
+      "update",
+      "--id",
+      taskId,
+      "--expected-version",
+      "1",
+      "--input-json",
+      JSON.stringify({ title: "Updated" }),
+    ]);
+
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      const occurredAt = database
+        .prepare(
+          "SELECT occurred_at AS occurredAt FROM task_events WHERE task_id = ? AND type = 'created'",
+        )
+        .get(taskId)?.occurredAt as string;
+      database
+        .prepare(
+          `UPDATE task_events SET occurred_at = ?, id = CASE type
+           WHEN 'created' THEN 'z-event' ELSE 'a-event' END WHERE task_id = ?`,
+        )
+        .run(occurredAt, taskId);
+    } finally {
+      database.close();
+    }
+
+    const history = fixture.run(["history", "--id", taskId]);
+    assert.deepEqual(
+      (history.data.events as Array<Record<string, unknown>>).map(
+        (event) => event.type,
+      ),
+      ["created", "updated"],
+    );
   });
 });
 
@@ -796,6 +865,7 @@ interface Captured {
     readonly task: Record<string, unknown>;
     readonly dependsOn: readonly unknown[];
     readonly tasks: readonly Record<string, unknown>[];
+    readonly events: readonly Record<string, unknown>[];
     readonly dependencies: readonly Record<string, unknown>[];
     readonly schemaVersion: unknown;
     readonly exportedAt: unknown;

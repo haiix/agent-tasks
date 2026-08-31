@@ -76,8 +76,7 @@ export function resolveDatabasePath(
 
 function databasePathExists(dbPath: string): boolean {
   try {
-    statSync(dbPath);
-    return true;
+    return statSync(dbPath).isFile();
   } catch (error) {
     const code = getErrorCode(error);
     if (code === "ENOENT" || code === "ENOTDIR") return false;

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { posix, win32 } from "node:path";
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, posix, win32 } from "node:path";
 import { describe, test } from "node:test";
 
 import { StorageError } from "../src/errors.ts";
@@ -69,6 +71,27 @@ void describe("database path resolution", () => {
       }),
       found,
     );
+  });
+
+  void test("skips a directory named tasks.sqlite and continues searching parents", () => {
+    const root = mkdtempSync(join(tmpdir(), "agent-tasks-path-"));
+    const project = join(root, "project");
+    const child = join(project, "packages", "app");
+    const childCandidate = join(child, ".agent-tasks", "tasks.sqlite");
+    const parentCandidate = join(project, ".agent-tasks", "tasks.sqlite");
+
+    try {
+      mkdirSync(childCandidate, { recursive: true });
+      mkdirSync(join(project, ".agent-tasks"), { recursive: true });
+      closeSync(openSync(parentCandidate, "wx"));
+
+      assert.equal(
+        resolveDatabasePath({ command: "list", cwd: child }),
+        parentCandidate,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   void test("returns NOT_INITIALIZED without creating a database", () => {

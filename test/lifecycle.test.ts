@@ -324,6 +324,10 @@ void describe("task lifecycle commands", () => {
       [first.exitCode, second.exitCode].sort((left, right) => left - right),
       [0, 4],
     );
+    assert.equal(first.stderr, "");
+    assert.equal(second.stderr, "");
+    assert.doesNotThrow(() => JSON.parse(first.stdout));
+    assert.doesNotThrow(() => JSON.parse(second.stdout));
     const failed = first.exitCode === 0 ? second : first;
     assert.equal(failed.response.error?.code, "VERSION_CONFLICT");
 
@@ -394,6 +398,8 @@ function initializedDatabase(): {
 function runProcess(args: readonly string[]): Promise<{
   readonly exitCode: number;
   readonly response: Captured;
+  readonly stdout: string;
+  readonly stderr: string;
 }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
@@ -418,6 +424,8 @@ function runProcess(args: readonly string[]): Promise<{
       }
       resolve({
         exitCode,
+        stdout,
+        stderr,
         response: {
           exitCode,
           ...(JSON.parse(stdout) as Omit<Captured, "exitCode">),

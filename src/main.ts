@@ -15,6 +15,7 @@ import {
   createTask,
   DependencyConflictError,
   DependencyNotFoundError,
+  exportTasks,
   getTask,
   getTaskHistory,
   listTasks,
@@ -58,6 +59,7 @@ type Command =
   | "transition"
   | "reopen"
   | "history"
+  | "export"
   | "dependency-add"
   | "dependency-remove";
 type Format = "json" | "text";
@@ -71,6 +73,7 @@ const COMMANDS: readonly Command[] = [
   "transition",
   "reopen",
   "history",
+  "export",
   "dependency-add",
   "dependency-remove",
 ];
@@ -117,7 +120,7 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
       case "get": {
         const taskId = requiredIdentifier(parsed, "--id");
         const dbPath = databasePath(command, parsed.values.get("--db"), io);
-        return writeOutput(io, format, getTask(dbPath, taskId));
+        return writeOutput(io, "get", format, getTask(dbPath, taskId));
       }
       case "list": {
         const status = optionalEnum(parsed, "--status", TASK_STATUSES);
@@ -136,6 +139,7 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
         const dbPath = databasePath(command, parsed.values.get("--db"), io);
         return writeOutput(
           io,
+          "list",
           format,
           listTasks(dbPath, {
             ...(status === undefined ? {} : { status: status as TaskStatus }),
@@ -219,9 +223,14 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
         const dbPath = databasePath(command, parsed.values.get("--db"), io);
         return writeOutput(
           io,
+          "history",
           format,
           getTaskHistory(dbPath, taskId, limit, cursor),
         );
+      }
+      case "export": {
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
+        return writeSuccess(io, exportTasks(dbPath));
       }
       case "dependency-add":
       case "dependency-remove": {
@@ -312,6 +321,7 @@ const VALUE_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
   ],
   reopen: ["--db", "--format", "--id", "--agent", "--expected-version"],
   history: ["--db", "--format", "--id", "--limit", "--cursor"],
+  export: ["--db", "--format"],
   "dependency-add": [
     "--db",
     "--format",
@@ -336,6 +346,7 @@ const FLAG_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
   transition: [],
   reopen: [],
   history: [],
+  export: [],
   "dependency-add": [],
   "dependency-remove": [],
   list: ["--unassigned", "--runnable"],
@@ -526,10 +537,72 @@ function invalidArgument(
     ...(value === undefined ? {} : { value }),
   });
 }
-function writeOutput(io: CliIo, format: Format, data: object): CliResult {
+function writeOutput(
+  io: CliIo,
+  command: "get" | "list" | "history",
+  format: Format,
+  data: object,
+): CliResult {
   if (format === "json") return writeSuccess(io, data);
-  io.writeStdout(`${JSON.stringify(data, null, 2)}\n`);
+  io.writeStdout(formatText(command, data));
   return { exitCode: 0 };
+}
+
+function formatText(command: "get" | "list" | "history", data: object): string {
+  if (command === "get") {
+    const result = data as ReturnType<typeof getTask>;
+    const task = result.task;
+    return [
+      `ID: ${task.id}`,
+      `Title: ${task.title}`,
+      `Status: ${task.status}`,
+      `Priority: ${task.priority}`,
+      `Assignee: ${task.assignee ?? "-"}`,
+      `Runnable: ${task.runnable ? "yes" : "no"}`,
+      `Depends on: ${result.dependsOn.join(", ") || "-"}`,
+      `Description: ${task.description || "-"}`,
+      "",
+    ].join("\n");
+  }
+  if (command === "list") {
+    const result = data as ReturnType<typeof listTasks>;
+    const rows = result.tasks.map((task) =>
+      [
+        task.id,
+        task.status,
+        task.priority,
+        task.assignee ?? "-",
+        task.runnable ? "yes" : "no",
+        task.title,
+      ].join("\t"),
+    );
+    return [
+      "ID\tSTATUS\tPRIORITY\tASSIGNEE\tRUNNABLE\tTITLE",
+      ...rows,
+      ...(result.nextCursor === null
+        ? []
+        : [`Next cursor: ${result.nextCursor}`]),
+      "",
+    ].join("\n");
+  }
+  const result = data as ReturnType<typeof getTaskHistory>;
+  const rows = result.events.map((event) =>
+    [
+      event.occurredAt,
+      event.type,
+      event.actor ?? "-",
+      `${event.fromVersion ?? "-"}->${event.toVersion}`,
+      JSON.stringify(event.details),
+    ].join("\t"),
+  );
+  return [
+    "OCCURRED_AT\tTYPE\tACTOR\tVERSION\tDETAILS",
+    ...rows,
+    ...(result.nextCursor === null
+      ? []
+      : [`Next cursor: ${result.nextCursor}`]),
+    "",
+  ].join("\n");
 }
 function writeSuccess(io: CliIo, data: object): CliResult {
   io.writeStdout(`${JSON.stringify({ ok: true, data })}\n`);

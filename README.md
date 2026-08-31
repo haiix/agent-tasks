@@ -3,7 +3,7 @@
 `agent-tasks`は、プロジェクト内で作業するAIエージェント向けのローカルタスク管理CLIです。サーバーや外部サービスを必要とせず、タスクの作成、検索、claim、状態遷移を機械処理しやすいインターフェースで提供します。
 
 > [!NOTE]
-> このプロジェクトは開発中です。現在はデータベース初期化、タスクの作成・取得・一覧・内容更新、依存関係の追加・解除、claim、状態遷移、再オープン、イベント履歴の取得が利用できます。
+> このプロジェクトは開発中です。現在はデータベース初期化、タスクの作成・取得・一覧・内容更新、依存関係の追加・解除、claim、状態遷移、再オープン、イベント履歴の取得、スナップショットのエクスポートが利用できます。
 
 ## 開発
 
@@ -38,9 +38,12 @@ npm run dev -- list --runnable
 npm run dev -- claim --id <task-id> --agent <agent-id> --expected-version 3
 npm run dev -- transition --id <task-id> --to done --agent <agent-id> --expected-version 4 --input-json '{"result":"Implemented and tested"}'
 npm run dev -- history --id <task-id>
+npm run dev -- export
 ```
 
 シェルの引用やコマンドライン長の影響を避ける場合は、`--input-json -`を指定して標準入力からJSONを渡す。
+
+`get`、`list`、`history`では、対話的な確認用に`--format text`も指定できる。`export`は確認・バックアップ用のスナップショットであり、編集して正本として扱うための形式ではない。
 
 ## 目的
 

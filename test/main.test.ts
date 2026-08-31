@@ -55,6 +55,18 @@ void test("reports an unknown command without throwing", () => {
   });
 });
 
+void test("validates command input before looking for a database", () => {
+  const cwd = temporaryDirectory();
+  const missingId = captureCli(["get"], cwd);
+  const invalidJson = captureCli(["create", "--input-json", "{"], cwd);
+
+  assert.equal(missingId.result.exitCode, 2);
+  assert.equal(missingId.response.error.code, "INVALID_ARGUMENT");
+  assert.deepEqual(missingId.response.error.details, { option: "--id" });
+  assert.equal(invalidJson.result.exitCode, 2);
+  assert.equal(invalidJson.response.error.code, "INVALID_JSON");
+});
+
 void test("initializes the default database and returns JSON", () => {
   const cwd = temporaryDirectory();
   let stdout = "";

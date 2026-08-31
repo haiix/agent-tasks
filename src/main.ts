@@ -66,9 +66,9 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
         { format: "text" },
       );
     }
-    const dbPath = databasePath(command, parsed.values.get("--db"), io);
     switch (command as Command) {
       case "init": {
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
         const result = initializeDatabase(dbPath);
         return writeSuccess(io, {
           dbPath,
@@ -76,17 +76,16 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
           created: result.created,
         });
       }
-      case "create":
-        return writeSuccess(
-          io,
-          createTask(dbPath, validateCreateTaskInput(readJson(parsed, io))),
-        );
-      case "get":
-        return writeOutput(
-          io,
-          format,
-          getTask(dbPath, requiredIdentifier(parsed, "--id")),
-        );
+      case "create": {
+        const input = validateCreateTaskInput(readJson(parsed, io));
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
+        return writeSuccess(io, createTask(dbPath, input));
+      }
+      case "get": {
+        const taskId = requiredIdentifier(parsed, "--id");
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
+        return writeOutput(io, format, getTask(dbPath, taskId));
+      }
       case "list": {
         const status = optionalEnum(parsed, "--status", TASK_STATUSES);
         const priority = optionalEnum(parsed, "--priority", PRIORITIES);
@@ -100,6 +99,8 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
             "--assignee and --unassigned cannot be combined.",
           );
         }
+        const limit = optionalInteger(parsed, "--limit", 50, 1, 200);
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
         return writeOutput(
           io,
           format,
@@ -112,21 +113,25 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
             ...(label === undefined ? {} : { label }),
             unassigned: parsed.flags.has("--unassigned"),
             runnable: parsed.flags.has("--runnable"),
-            limit: optionalInteger(parsed, "--limit", 50, 1, 200),
+            limit,
             ...(cursor === undefined ? {} : { cursor }),
           }),
         );
       }
-      case "update":
+      case "update": {
+        const taskId = requiredIdentifier(parsed, "--id");
+        const expectedVersion = requiredInteger(
+          parsed,
+          "--expected-version",
+          1,
+        );
+        const input = validateUpdateTaskInput(readJson(parsed, io));
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
         return writeSuccess(
           io,
-          updateTask(
-            dbPath,
-            requiredIdentifier(parsed, "--id"),
-            requiredInteger(parsed, "--expected-version", 1),
-            validateUpdateTaskInput(readJson(parsed, io)),
-          ),
+          updateTask(dbPath, taskId, expectedVersion, input),
         );
+      }
     }
   } catch (error) {
     if (error instanceof CliFailure)

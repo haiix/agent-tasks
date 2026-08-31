@@ -153,6 +153,22 @@ void describe("create/get/update commands", () => {
       { path: "status", code: "unknown_field", message: "Unknown field." },
     ]);
   });
+
+  void test("reports a schema mismatch as DB_INVALID", () => {
+    const fixture = initializedDatabase();
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      database.exec("PRAGMA foreign_keys = OFF");
+      database.exec("DROP TABLE tasks");
+    } finally {
+      database.close();
+    }
+
+    const result = fixture.run(["get", "--id", "task-1"]);
+    assert.equal(result.exitCode, 5);
+    assert.equal(result.error?.code, "DB_INVALID");
+    assert.deepEqual(result.error?.details, { dbPath: fixture.dbPath });
+  });
 });
 
 void describe("list command", () => {

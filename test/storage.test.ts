@@ -361,6 +361,26 @@ void describe("SQLite storage", () => {
     );
   });
 
+  void test("rejects a schema that differs from its migration history", () => {
+    const dbPath = temporaryDatabasePath();
+    initializeDatabase(dbPath);
+    const database = new DatabaseSync(dbPath);
+    try {
+      database.exec("PRAGMA foreign_keys = OFF");
+      database.exec("DROP TABLE tasks");
+    } finally {
+      database.close();
+    }
+
+    assert.throws(
+      () => initializeDatabase(dbPath),
+      (error: unknown) =>
+        error instanceof StorageError &&
+        error.code === "DB_INVALID" &&
+        error.details.dbPath === dbPath,
+    );
+  });
+
   void test("converts an invalid database file into a structured error", () => {
     const dbPath = temporaryDatabasePath();
     writeFileSync(dbPath, "not a sqlite database", "utf8");

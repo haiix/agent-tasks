@@ -7,6 +7,7 @@
 | 文書                               | 内容                                   | ステータス |
 | ---------------------------------- | -------------------------------------- | ---------- |
 | [architecture.md](architecture.md) | 全体構成、保存方式、データ配置         | Accepted   |
+| [database.md](database.md)         | SQLiteスキーマ、マイグレーション、障害 | Accepted   |
 | [cli-spec.md](cli-spec.md)         | CLIコマンド、JSON入出力、エラー        | Accepted   |
 | [task-model.md](task-model.md)     | タスク項目、状態、遷移、依存関係       | Accepted   |
 | [development.md](development.md)   | TypeScript/ESM開発環境、ビルド、テスト | Accepted   |

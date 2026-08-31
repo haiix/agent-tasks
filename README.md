@@ -32,6 +32,7 @@ npm run check
 プロジェクトの仕様と設計判断は[`documents/`](documents/README.md)で管理します。
 
 - [アーキテクチャと保存方式](documents/architecture.md)
+- [SQLiteスキーマとマイグレーション](documents/database.md)
 - [CLI仕様](documents/cli-spec.md)
 - [タスクモデルとライフサイクル](documents/task-model.md)
 - [開発環境と配布方式](documents/development.md)

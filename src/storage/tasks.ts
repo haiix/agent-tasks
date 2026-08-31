@@ -1,0 +1,433 @@
+import { DatabaseSync } from "node:sqlite";
+
+import type {
+  CreateTaskInput,
+  Priority,
+  Task,
+  TaskStatus,
+  UpdateTaskInput,
+} from "../domain/task.ts";
+import { StorageError } from "../errors.ts";
+import { generateId } from "../id.ts";
+import { validateTask } from "../validation/task.ts";
+import {
+  configureConnection,
+  toStorageError,
+  verifyDatabaseSchema,
+} from "./database.ts";
+
+export class TaskNotFoundError extends Error {
+  readonly code = "TASK_NOT_FOUND";
+  readonly details: Readonly<{ taskId: string }>;
+
+  constructor(taskId: string) {
+    super("The requested task does not exist.");
+    this.name = "TaskNotFoundError";
+    this.details = { taskId };
+  }
+}
+
+export class VersionConflictError extends Error {
+  readonly code = "VERSION_CONFLICT";
+  readonly details: Readonly<{
+    taskId: string;
+    expectedVersion: number;
+    actualVersion: number;
+  }>;
+
+  constructor(taskId: string, expectedVersion: number, actualVersion: number) {
+    super("Task was modified by another process.");
+    this.name = "VersionConflictError";
+    this.details = { taskId, expectedVersion, actualVersion };
+  }
+}
+
+export class CursorInvalidError extends Error {
+  readonly code = "CURSOR_INVALID";
+  readonly details = {};
+
+  constructor() {
+    super("The cursor is invalid or does not match the list options.");
+    this.name = "CursorInvalidError";
+  }
+}
+
+interface TaskRow {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly status: TaskStatus;
+  readonly priority: Priority;
+  readonly assignee: string | null;
+  readonly blocked_reason: string | null;
+  readonly result: string | null;
+  readonly labels_json: string;
+  readonly metadata_json: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly version: number;
+  readonly runnable: number;
+}
+
+export interface TaskResult {
+  readonly task: Task & { readonly runnable: boolean };
+  readonly dependsOn: readonly string[];
+}
+
+export interface ListFilters {
+  readonly status?: TaskStatus;
+  readonly priority?: Priority;
+  readonly assignee?: string;
+  readonly unassigned: boolean;
+  readonly label?: string;
+  readonly runnable: boolean;
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
+export interface ListResult {
+  readonly tasks: readonly (Task & { readonly runnable: boolean })[];
+  readonly nextCursor: string | null;
+}
+
+const TASK_SELECT = `
+  SELECT t.*,
+    CASE WHEN t.status = 'pending' AND NOT EXISTS (
+      SELECT 1 FROM task_dependencies d
+      JOIN tasks dependency ON dependency.id = d.depends_on
+      WHERE d.task_id = t.id AND dependency.status <> 'done'
+    ) THEN 1 ELSE 0 END AS runnable
+  FROM tasks t`;
+
+const PRIORITY_RANK = `CASE t.priority
+  WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 END`;
+
+export function createTask(
+  dbPath: string,
+  input: CreateTaskInput,
+  options: {
+    readonly now?: () => string;
+    readonly generateId?: () => string;
+  } = {},
+): TaskResult {
+  return withDatabase(dbPath, (database) => {
+    const now = (options.now ?? (() => new Date().toISOString()))();
+    const makeId = options.generateId ?? generateId;
+    const id = makeId();
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const dependencyId of input.dependsOn) {
+        requireTaskRow(database, dependencyId);
+      }
+      database
+        .prepare(
+          `INSERT INTO tasks (
+          id, title, description, status, priority, assignee, blocked_reason,
+          result, labels_json, metadata_json, created_at, updated_at,
+          started_at, completed_at, version
+        ) VALUES (?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL, 1)`,
+        )
+        .run(
+          id,
+          input.title,
+          input.description,
+          input.priority,
+          JSON.stringify(input.labels),
+          JSON.stringify(input.metadata),
+          now,
+          now,
+        );
+      const dependencyInsert = database.prepare(
+        "INSERT INTO task_dependencies (task_id, depends_on) VALUES (?, ?)",
+      );
+      for (const dependencyId of input.dependsOn) {
+        dependencyInsert.run(id, dependencyId);
+      }
+      const result = getTaskInDatabase(database, id);
+      database
+        .prepare(
+          `INSERT INTO task_events (
+          id, task_id, type, actor, occurred_at, from_version, to_version, details_json
+        ) VALUES (?, ?, 'created', NULL, ?, NULL, 1, ?)`,
+        )
+        .run(makeId(), id, now, JSON.stringify(result));
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+
+export function getTask(dbPath: string, taskId: string): TaskResult {
+  return withDatabase(dbPath, (database) =>
+    getTaskInDatabase(database, taskId),
+  );
+}
+
+export function updateTask(
+  dbPath: string,
+  taskId: string,
+  expectedVersion: number,
+  input: UpdateTaskInput,
+  options: {
+    readonly now?: () => string;
+    readonly generateId?: () => string;
+  } = {},
+): TaskResult {
+  return withDatabase(dbPath, (database) => {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const before = getTaskInDatabase(database, taskId);
+      if (before.task.version !== expectedVersion) {
+        throw new VersionConflictError(
+          taskId,
+          expectedVersion,
+          before.task.version,
+        );
+      }
+      const now = (options.now ?? (() => new Date().toISOString()))();
+      const values = {
+        title: input.title ?? before.task.title,
+        description: input.description ?? before.task.description,
+        priority: input.priority ?? before.task.priority,
+        labels: input.labels ?? before.task.labels,
+        metadata: input.metadata ?? before.task.metadata,
+      };
+      database
+        .prepare(
+          `UPDATE tasks SET title = ?, description = ?, priority = ?,
+          labels_json = ?, metadata_json = ?, updated_at = ?, version = version + 1
+          WHERE id = ? AND version = ?`,
+        )
+        .run(
+          values.title,
+          values.description,
+          values.priority,
+          JSON.stringify(values.labels),
+          JSON.stringify(values.metadata),
+          now,
+          taskId,
+          expectedVersion,
+        );
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+      for (const key of Object.keys(input) as (keyof UpdateTaskInput)[]) {
+        changes[key] = { from: before.task[key], to: values[key] };
+      }
+      database
+        .prepare(
+          `INSERT INTO task_events (
+          id, task_id, type, actor, occurred_at, from_version, to_version, details_json
+        ) VALUES (?, ?, 'updated', NULL, ?, ?, ?, ?)`,
+        )
+        .run(
+          (options.generateId ?? generateId)(),
+          taskId,
+          now,
+          expectedVersion,
+          expectedVersion + 1,
+          JSON.stringify({ changes }),
+        );
+      const result = getTaskInDatabase(database, taskId);
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+
+export function listTasks(dbPath: string, filters: ListFilters): ListResult {
+  return withDatabase(dbPath, (database) => {
+    const signature = cursorSignature(filters);
+    const after =
+      filters.cursor === undefined
+        ? undefined
+        : decodeCursor(filters.cursor, signature);
+    const where: string[] = [];
+    const parameters: (string | number)[] = [];
+    if (filters.status !== undefined) {
+      where.push("t.status = ?");
+      parameters.push(filters.status);
+    }
+    if (filters.priority !== undefined) {
+      where.push("t.priority = ?");
+      parameters.push(filters.priority);
+    }
+    if (filters.assignee !== undefined) {
+      where.push("t.assignee = ?");
+      parameters.push(filters.assignee);
+    }
+    if (filters.unassigned) where.push("t.assignee IS NULL");
+    if (filters.label !== undefined) {
+      where.push(
+        "EXISTS (SELECT 1 FROM json_each(t.labels_json) WHERE value = ?)",
+      );
+      parameters.push(filters.label);
+    }
+    if (filters.runnable) {
+      where.push(`t.status = 'pending' AND NOT EXISTS (
+        SELECT 1 FROM task_dependencies rd
+        JOIN tasks rt ON rt.id = rd.depends_on
+        WHERE rd.task_id = t.id AND rt.status <> 'done')`);
+    }
+    if (after !== undefined) {
+      where.push(`(${PRIORITY_RANK} > ? OR (${PRIORITY_RANK} = ? AND
+        (t.created_at > ? OR (t.created_at = ? AND t.id > ?))))`);
+      parameters.push(
+        after.rank,
+        after.rank,
+        after.createdAt,
+        after.createdAt,
+        after.id,
+      );
+    }
+    const rows = database
+      .prepare(
+        `${TASK_SELECT} ${where.length === 0 ? "" : `WHERE ${where.join(" AND ")}`}
+        ORDER BY ${PRIORITY_RANK}, t.created_at, t.id LIMIT ?`,
+      )
+      .all(...parameters, filters.limit + 1) as unknown as TaskRow[];
+    const hasMore = rows.length > filters.limit;
+    const page = rows.slice(0, filters.limit);
+    const tasks = page.map(rowToTask);
+    const last = page.at(-1);
+    return {
+      tasks,
+      nextCursor:
+        hasMore && last !== undefined
+          ? encodeCursor({
+              v: 1,
+              signature,
+              rank: priorityRank(last.priority),
+              createdAt: last.created_at,
+              id: last.id,
+            })
+          : null,
+    };
+  });
+}
+
+function getTaskInDatabase(database: DatabaseSync, taskId: string): TaskResult {
+  const row = database.prepare(`${TASK_SELECT} WHERE t.id = ?`).get(taskId) as
+    TaskRow | undefined;
+  if (row === undefined) throw new TaskNotFoundError(taskId);
+  const dependencies = database
+    .prepare(
+      "SELECT depends_on FROM task_dependencies WHERE task_id = ? ORDER BY depends_on",
+    )
+    .all(taskId) as unknown as { depends_on: string }[];
+  return {
+    task: rowToTask(row),
+    dependsOn: dependencies.map((row) => row.depends_on),
+  };
+}
+
+function requireTaskRow(database: DatabaseSync, taskId: string): void {
+  if (
+    database.prepare("SELECT 1 FROM tasks WHERE id = ?").get(taskId) ===
+    undefined
+  ) {
+    throw new TaskNotFoundError(taskId);
+  }
+}
+
+function rowToTask(row: TaskRow): Task & { readonly runnable: boolean } {
+  const task = validateTask({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    priority: row.priority,
+    assignee: row.assignee,
+    blockedReason: row.blocked_reason,
+    result: row.result,
+    labels: JSON.parse(row.labels_json) as unknown,
+    metadata: JSON.parse(row.metadata_json) as unknown,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    version: row.version,
+  });
+  return { ...task, runnable: row.runnable === 1 };
+}
+
+interface CursorPayload {
+  readonly v: 1;
+  readonly signature: string;
+  readonly rank: number;
+  readonly createdAt: string;
+  readonly id: string;
+}
+
+function cursorSignature(filters: ListFilters): string {
+  return JSON.stringify({
+    status: filters.status ?? null,
+    priority: filters.priority ?? null,
+    assignee: filters.assignee ?? null,
+    unassigned: filters.unassigned,
+    label: filters.label ?? null,
+    runnable: filters.runnable,
+    limit: filters.limit,
+  });
+}
+
+function encodeCursor(payload: CursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeCursor(value: string, signature: string): CursorPayload {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(value, "base64url").toString("utf8"),
+    ) as Partial<CursorPayload>;
+    if (
+      payload.v !== 1 ||
+      payload.signature !== signature ||
+      !Number.isInteger(payload.rank) ||
+      typeof payload.createdAt !== "string" ||
+      typeof payload.id !== "string" ||
+      encodeCursor(payload as CursorPayload) !== value
+    ) {
+      throw new CursorInvalidError();
+    }
+    return payload as CursorPayload;
+  } catch (error) {
+    if (error instanceof CursorInvalidError) throw error;
+    throw new CursorInvalidError();
+  }
+}
+
+function priorityRank(priority: Priority): number {
+  return { urgent: 0, high: 1, normal: 2, low: 3 }[priority];
+}
+
+function withDatabase<T>(
+  dbPath: string,
+  operation: (database: DatabaseSync) => T,
+): T {
+  let database: DatabaseSync | undefined;
+  try {
+    database = new DatabaseSync(dbPath);
+    configureConnection(database);
+    verifyDatabaseSchema(database, dbPath);
+    return operation(database);
+  } catch (error) {
+    if (
+      error instanceof TaskNotFoundError ||
+      error instanceof VersionConflictError ||
+      error instanceof CursorInvalidError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    throw toStorageError(error, dbPath);
+  } finally {
+    database?.close();
+  }
+}

@@ -152,6 +152,30 @@ function validateAppliedMigrations(
   }
 }
 
+export function verifyDatabaseSchema(
+  database: DatabaseSync,
+  dbPath: string,
+): void {
+  try {
+    validateAppliedMigrations(database, MIGRATIONS, dbPath);
+    if (getMigration(database, LATEST_SCHEMA_VERSION) === undefined) {
+      throw new StorageError(
+        "DB_INVALID",
+        "The database schema is not initialized to the required version.",
+        dbPath,
+      );
+    }
+  } catch (error) {
+    if (error instanceof StorageError) throw error;
+    throw new StorageError(
+      "DB_INVALID",
+      "The database schema is invalid.",
+      dbPath,
+      error,
+    );
+  }
+}
+
 function validateMigrationRow(
   row: MigrationRow,
   migration: Migration,
@@ -191,7 +215,7 @@ function runTransaction(database: DatabaseSync, operation: () => void): void {
   }
 }
 
-function toStorageError(error: unknown, dbPath: string): StorageError {
+export function toStorageError(error: unknown, dbPath: string): StorageError {
   if (error instanceof StorageError) return error;
   const sqliteCode = getErrorCode(error);
   const sqliteErrorNumber = getSqlitePrimaryErrorNumber(error);

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, test } from "node:test";
+import { Worker } from "node:worker_threads";
 
 import { StorageError } from "../src/errors.ts";
 import {
@@ -145,6 +146,14 @@ void describe("SQLite storage", () => {
       );
       insertTask.run("task-1", "First", timestamp, timestamp);
       insertTask.run("task-2", "Second", timestamp, timestamp);
+      insertTask.run("task-3", "Third", timestamp, timestamp);
+      insertTask.run("task-4", "Fourth", timestamp, timestamp);
+      const updatePriority = database.prepare(
+        "UPDATE tasks SET priority = ? WHERE id = ?",
+      );
+      updatePriority.run("low", "task-1");
+      updatePriority.run("urgent", "task-2");
+      updatePriority.run("high", "task-3");
 
       const insertDependency = database.prepare(
         "INSERT INTO task_dependencies (task_id, depends_on) VALUES (?, ?)",
@@ -169,12 +178,103 @@ void describe("SQLite storage", () => {
         "idx_tasks_list_order",
         "idx_tasks_status",
       ]);
+
+      const listOrderExpression = `CASE priority
+        WHEN 'urgent' THEN 0
+        WHEN 'high' THEN 1
+        WHEN 'normal' THEN 2
+        WHEN 'low' THEN 3
+      END`;
+      const queryPlan = database
+        .prepare(
+          `EXPLAIN QUERY PLAN
+           SELECT id FROM tasks
+           ORDER BY ${listOrderExpression}, created_at, id`,
+        )
+        .all();
+      assert.equal(
+        queryPlan.some(
+          (row) =>
+            typeof row.detail === "string" &&
+            row.detail.includes("idx_tasks_list_order"),
+        ),
+        true,
+      );
+      assert.deepEqual(
+        database
+          .prepare(
+            `SELECT id FROM tasks
+             ORDER BY ${listOrderExpression}, created_at, id`,
+          )
+          .all()
+          .map((row) => row.id),
+        ["task-2", "task-3", "task-4", "task-1"],
+      );
     } finally {
       database.close();
     }
   });
 
-  void test("rolls back every statement in a failed migration", () => {
+  void test("revalidates the full history after acquiring the write lock", async () => {
+    const dbPath = temporaryDatabasePath();
+    initializeDatabase(dbPath);
+    const writer = new DatabaseSync(dbPath);
+    configureConnection(writer);
+    writer.exec("BEGIN IMMEDIATE");
+    writer
+      .prepare(
+        `INSERT INTO schema_migrations (version, name, checksum, applied_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(2, "future", "future-checksum", "2026-08-31T00:00:00.000Z");
+
+    const databaseModuleUrl = new URL(
+      "../src/storage/database.ts",
+      import.meta.url,
+    ).href;
+    const worker = new Worker(
+      `
+        const { parentPort } = require("node:worker_threads");
+        const { DatabaseSync } = require("node:sqlite");
+
+        void (async () => {
+          const { applyMigrations } = await import(${JSON.stringify(databaseModuleUrl)});
+          parentPort.postMessage({ type: "ready" });
+          parentPort.once("message", () => {
+            const database = new DatabaseSync(${JSON.stringify(dbPath)});
+            database.exec("PRAGMA busy_timeout = 5000");
+            try {
+              applyMigrations(database, ${JSON.stringify(dbPath)});
+              parentPort.postMessage({ type: "result", code: null });
+            } catch (error) {
+              parentPort.postMessage({ type: "result", code: error.code ?? null });
+            } finally {
+              database.close();
+            }
+          });
+        })();
+      `,
+      { eval: true },
+    );
+
+    try {
+      assert.deepEqual(await nextWorkerMessage(worker), { type: "ready" });
+      const result = nextWorkerMessage(worker);
+      worker.postMessage({ type: "start" });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      writer.exec("COMMIT");
+      assert.deepEqual(await result, {
+        type: "result",
+        code: "SCHEMA_VERSION_UNSUPPORTED",
+      });
+    } finally {
+      if (writer.isTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      await worker.terminate();
+    }
+  });
+
+  void test("rolls back all schema changes when a migration fails", () => {
     const dbPath = temporaryDatabasePath();
     const database = new DatabaseSync(dbPath);
     const migrations: readonly Migration[] = [
@@ -207,12 +307,13 @@ void describe("SQLite storage", () => {
           .get("must_be_rolled_back")?.count,
         0,
       );
-      assert.deepEqual(
+      assert.equal(
         database
-          .prepare("SELECT version FROM schema_migrations ORDER BY version")
-          .all()
-          .map((row) => row.version),
-        [1],
+          .prepare(
+            "SELECT count(*) AS count FROM sqlite_schema WHERE name IN (?, ?)",
+          )
+          .get("stable", "schema_migrations")?.count,
+        0,
       );
     } finally {
       database.close();
@@ -283,4 +384,19 @@ function temporaryDatabasePath(nested = false): string {
   return nested
     ? join(directory, "nested", "tasks.sqlite")
     : join(directory, "tasks.sqlite");
+}
+
+function nextWorkerMessage(worker: Worker): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (message: unknown): void => {
+      worker.off("error", onError);
+      resolve(message);
+    };
+    const onError = (error: Error): void => {
+      worker.off("message", onMessage);
+      reject(error);
+    };
+    worker.once("message", onMessage);
+    worker.once("error", onError);
+  });
 }

@@ -76,15 +76,15 @@ export function applyMigrations(
   const now = options.now ?? (() => new Date().toISOString());
 
   validateMigrationDefinitions(migrations, dbPath);
-  runTransaction(database, () => database.exec(SCHEMA_MIGRATIONS_SQL));
-  validateAppliedMigrations(database, migrations, dbPath);
+  runTransaction(database, () => {
+    database.exec(SCHEMA_MIGRATIONS_SQL);
+    validateAppliedMigrations(database, migrations, dbPath);
 
-  for (const migration of migrations) {
-    runTransaction(database, () => {
+    for (const migration of migrations) {
       const existing = getMigration(database, migration.version);
       if (existing !== undefined) {
         validateMigrationRow(existing, migration, dbPath);
-        return;
+        continue;
       }
 
       executeMigration(database, migration);
@@ -100,8 +100,8 @@ export function applyMigrations(
           migrationChecksum(migration),
           now(),
         );
-    });
-  }
+    }
+  });
 
   return migrations.at(-1)?.version ?? 0;
 }

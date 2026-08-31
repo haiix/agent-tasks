@@ -105,7 +105,18 @@ export const MIGRATIONS: readonly Migration[] = [
           )
         ) STRICT
       `,
-      "CREATE INDEX idx_tasks_list_order ON tasks(priority, created_at, id)",
+      `
+        CREATE INDEX idx_tasks_list_order ON tasks(
+          CASE priority
+            WHEN 'urgent' THEN 0
+            WHEN 'high' THEN 1
+            WHEN 'normal' THEN 2
+            WHEN 'low' THEN 3
+          END,
+          created_at,
+          id
+        )
+      `,
       "CREATE INDEX idx_tasks_status ON tasks(status)",
       "CREATE INDEX idx_tasks_assignee ON tasks(assignee)",
       "CREATE INDEX idx_task_dependencies_depends_on ON task_dependencies(depends_on, task_id)",

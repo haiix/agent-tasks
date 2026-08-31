@@ -43,7 +43,7 @@
 
 一覧、状態、担当者の検索用に次のインデックスを持つ。
 
-- `idx_tasks_list_order(priority, created_at, id)`
+- `idx_tasks_list_order(CASE priority ... END, created_at, id)`: 優先度を`urgent`、`high`、`normal`、`low`のランクへ変換する式インデックス
 - `idx_tasks_status(status)`
 - `idx_tasks_assignee(assignee)`
 
@@ -70,9 +70,9 @@
 
 ## 初期化とマイグレーション
 
-初期化はDBの親ディレクトリを作成し、未作成ならSQLiteファイルを作る。`schema_migrations`の準備と各マイグレーションはそれぞれ`BEGIN IMMEDIATE`トランザクション内で実行する。失敗時はそのマイグレーションのDDLと履歴行をすべてロールバックする。
+初期化はDBの親ディレクトリを作成し、未作成ならSQLiteファイルを作る。`BEGIN IMMEDIATE`で書き込みロックを取得してから、`schema_migrations`の準備、適用済み履歴全体の検証、すべての未適用マイグレーションを同一トランザクション内で実行する。失敗時は今回の初期化で実行したDDLと履歴行をすべてロールバックする。
 
-初期化を繰り返した場合、適用済みversion、名前、チェックサムを確認するだけでデータを変更しない。同時に複数プロセスが初期化した場合は、書き込みロック取得後に適用済みversionを再確認する。
+初期化を繰り返した場合、適用済みversion、名前、チェックサムを確認するだけでデータを変更しない。同時に新旧バージョンのプロセスが初期化した場合も、書き込みロック取得後に最新versionを含む履歴全体を検証し、未対応スキーマの利用を拒否する。
 
 次の場合は処理を中止する。
 

@@ -249,6 +249,200 @@ void describe("list command", () => {
   });
 });
 
+void describe("task dependencies", () => {
+  void test("adds and removes dependencies with versioned events", () => {
+    const fixture = initializedDatabase();
+    const dependency = fixture.create({ title: "Dependency" });
+    const dependent = fixture.create({ title: "Dependent" });
+
+    const added = fixture.run([
+      "dependency-add",
+      "--id",
+      dependent.data.task.id as string,
+      "--depends-on",
+      dependency.data.task.id as string,
+      "--expected-version",
+      "1",
+    ]);
+    assert.equal(added.exitCode, 0);
+    assert.equal(added.data.task.version, 2);
+    assert.equal(added.data.task.runnable, false);
+    assert.deepEqual(added.data.dependsOn, [dependency.data.task.id]);
+
+    const removed = fixture.run([
+      "dependency-remove",
+      "--id",
+      dependent.data.task.id as string,
+      "--depends-on",
+      dependency.data.task.id as string,
+      "--expected-version",
+      "2",
+    ]);
+    assert.equal(removed.exitCode, 0);
+    assert.equal(removed.data.task.version, 3);
+    assert.equal(removed.data.task.runnable, true);
+    assert.deepEqual(removed.data.dependsOn, []);
+
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      const events = database
+        .prepare(
+          "SELECT type, details_json FROM task_events WHERE task_id = ? ORDER BY to_version",
+        )
+        .all(dependent.data.task.id as string) as unknown as Array<
+        Record<string, unknown>
+      >;
+      assert.deepEqual(
+        events.map((event) => ({
+          type: event.type,
+          details: JSON.parse(event.details_json as string) as unknown,
+        })),
+        [
+          { type: "created", details: dependent.data },
+          {
+            type: "dependencyAdded",
+            details: { dependsOn: dependency.data.task.id },
+          },
+          {
+            type: "dependencyRemoved",
+            details: { dependsOn: dependency.data.task.id },
+          },
+        ],
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  void test("rejects self, duplicate, cyclic, missing, and stale changes", () => {
+    const fixture = initializedDatabase();
+    const first = fixture.create({ title: "First" });
+    const second = fixture.create({
+      title: "Second",
+      dependsOn: [first.data.task.id],
+    });
+    const third = fixture.create({
+      title: "Third",
+      dependsOn: [second.data.task.id],
+    });
+
+    const conflicts = [
+      {
+        args: [first.data.task.id, first.data.task.id, "self"],
+      },
+      {
+        args: [second.data.task.id, first.data.task.id, "duplicate"],
+      },
+      {
+        args: [first.data.task.id, third.data.task.id, "cycle"],
+      },
+    ];
+    for (const conflict of conflicts) {
+      const [taskId, dependsOn, reason] = conflict.args as string[];
+      const result = fixture.run([
+        "dependency-add",
+        "--id",
+        taskId as string,
+        "--depends-on",
+        dependsOn as string,
+        "--expected-version",
+        "1",
+      ]);
+      assert.equal(result.exitCode, 4);
+      assert.deepEqual(result.error, {
+        code: "DEPENDENCY_CONFLICT",
+        message: "The dependency conflicts with the existing dependency graph.",
+        details: { taskId, dependsOn, reason },
+      });
+    }
+
+    const missing = fixture.run([
+      "dependency-remove",
+      "--id",
+      first.data.task.id as string,
+      "--depends-on",
+      second.data.task.id as string,
+      "--expected-version",
+      "1",
+    ]);
+    assert.equal(missing.exitCode, 3);
+    assert.equal(missing.error?.code, "DEPENDENCY_NOT_FOUND");
+
+    const stale = fixture.run([
+      "dependency-remove",
+      "--id",
+      second.data.task.id as string,
+      "--depends-on",
+      first.data.task.id as string,
+      "--expected-version",
+      "2",
+    ]);
+    assert.equal(stale.exitCode, 4);
+    assert.equal(stale.error?.code, "VERSION_CONFLICT");
+  });
+
+  void test("derives runnable across multiple levels and after reopening a dependency", () => {
+    const fixture = initializedDatabase();
+    const foundation = fixture.create({ title: "Foundation" });
+    const middle = fixture.create({
+      title: "Middle",
+      dependsOn: [foundation.data.task.id],
+    });
+    const top = fixture.create({
+      title: "Top",
+      dependsOn: [middle.data.task.id],
+    });
+
+    assert.deepEqual(runnableIds(fixture.run(["list", "--runnable"])), [
+      foundation.data.task.id,
+    ]);
+
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      markDone(database, foundation.data.task.id as string);
+      assert.deepEqual(runnableIds(fixture.run(["list", "--runnable"])), [
+        middle.data.task.id,
+      ]);
+      markDone(database, middle.data.task.id as string);
+      assert.deepEqual(runnableIds(fixture.run(["list", "--runnable"])), [
+        top.data.task.id,
+      ]);
+
+      database
+        .prepare(
+          `UPDATE tasks SET status = 'pending', assignee = NULL, result = NULL,
+           started_at = NULL, completed_at = NULL WHERE id = ?`,
+        )
+        .run(middle.data.task.id as string);
+      assert.deepEqual(runnableIds(fixture.run(["list", "--runnable"])), [
+        middle.data.task.id,
+      ]);
+      assert.equal(
+        fixture.run(["get", "--id", top.data.task.id as string]).data.task
+          .runnable,
+        false,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+function runnableIds(result: Captured): readonly unknown[] {
+  return (result.data.tasks as Array<Record<string, unknown>>).map(
+    (task) => task.id,
+  );
+}
+
+function markDone(database: DatabaseSync, taskId: string): void {
+  database
+    .prepare(
+      `UPDATE tasks SET status = 'done', assignee = 'test-agent', result = 'done',
+       started_at = created_at, completed_at = updated_at WHERE id = ?`,
+    )
+    .run(taskId);
+}
+
 interface Captured {
   readonly exitCode: number;
   readonly data: {

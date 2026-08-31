@@ -7,9 +7,9 @@ import type {
   TaskStatus,
   UpdateTaskInput,
 } from "../domain/task.ts";
-import { StorageError } from "../errors.ts";
+import { DomainError, StorageError } from "../errors.ts";
 import { generateId } from "../id.ts";
-import { validateTask } from "../validation/task.ts";
+import { TASK_LIMITS, validateTask } from "../validation/task.ts";
 import {
   configureConnection,
   toStorageError,
@@ -49,6 +49,38 @@ export class CursorInvalidError extends Error {
   constructor() {
     super("The cursor is invalid or does not match the list options.");
     this.name = "CursorInvalidError";
+  }
+}
+
+export class DependencyNotFoundError extends Error {
+  readonly code = "DEPENDENCY_NOT_FOUND";
+  readonly details: Readonly<{ taskId: string; dependsOn: string }>;
+
+  constructor(taskId: string, dependsOn: string) {
+    super("The requested dependency does not exist.");
+    this.name = "DependencyNotFoundError";
+    this.details = { taskId, dependsOn };
+  }
+}
+
+export type DependencyConflictReason = "self" | "duplicate" | "cycle";
+
+export class DependencyConflictError extends Error {
+  readonly code = "DEPENDENCY_CONFLICT";
+  readonly details: Readonly<{
+    taskId: string;
+    dependsOn: string;
+    reason: DependencyConflictReason;
+  }>;
+
+  constructor(
+    taskId: string,
+    dependsOn: string,
+    reason: DependencyConflictReason,
+  ) {
+    super("The dependency conflicts with the existing dependency graph.");
+    this.name = "DependencyConflictError";
+    this.details = { taskId, dependsOn, reason };
   }
 }
 
@@ -241,6 +273,46 @@ export function updateTask(
   });
 }
 
+export function addTaskDependency(
+  dbPath: string,
+  taskId: string,
+  dependsOn: string,
+  expectedVersion: number,
+  options: {
+    readonly now?: () => string;
+    readonly generateId?: () => string;
+  } = {},
+): TaskResult {
+  return changeTaskDependency(
+    dbPath,
+    taskId,
+    dependsOn,
+    expectedVersion,
+    "add",
+    options,
+  );
+}
+
+export function removeTaskDependency(
+  dbPath: string,
+  taskId: string,
+  dependsOn: string,
+  expectedVersion: number,
+  options: {
+    readonly now?: () => string;
+    readonly generateId?: () => string;
+  } = {},
+): TaskResult {
+  return changeTaskDependency(
+    dbPath,
+    taskId,
+    dependsOn,
+    expectedVersion,
+    "remove",
+    options,
+  );
+}
+
 export function listTasks(dbPath: string, filters: ListFilters): ListResult {
   return withDatabase(dbPath, (database) => {
     const signature = cursorSignature(filters);
@@ -336,6 +408,120 @@ function requireTaskRow(database: DatabaseSync, taskId: string): void {
   }
 }
 
+function changeTaskDependency(
+  dbPath: string,
+  taskId: string,
+  dependsOn: string,
+  expectedVersion: number,
+  operation: "add" | "remove",
+  options: {
+    readonly now?: () => string;
+    readonly generateId?: () => string;
+  },
+): TaskResult {
+  return withDatabase(dbPath, (database) => {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const before = getTaskInDatabase(database, taskId);
+      if (before.task.version !== expectedVersion) {
+        throw new VersionConflictError(
+          taskId,
+          expectedVersion,
+          before.task.version,
+        );
+      }
+
+      if (operation === "add") {
+        requireTaskRow(database, dependsOn);
+        assertDependencyCanBeAdded(database, taskId, dependsOn, before);
+        database
+          .prepare(
+            "INSERT INTO task_dependencies (task_id, depends_on) VALUES (?, ?)",
+          )
+          .run(taskId, dependsOn);
+      } else {
+        const removed = database
+          .prepare(
+            "DELETE FROM task_dependencies WHERE task_id = ? AND depends_on = ?",
+          )
+          .run(taskId, dependsOn);
+        if (removed.changes === 0) {
+          throw new DependencyNotFoundError(taskId, dependsOn);
+        }
+      }
+
+      const now = (options.now ?? (() => new Date().toISOString()))();
+      database
+        .prepare(
+          "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ? AND version = ?",
+        )
+        .run(now, taskId, expectedVersion);
+      database
+        .prepare(
+          `INSERT INTO task_events (
+          id, task_id, type, actor, occurred_at, from_version, to_version, details_json
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
+        )
+        .run(
+          (options.generateId ?? generateId)(),
+          taskId,
+          operation === "add" ? "dependencyAdded" : "dependencyRemoved",
+          now,
+          expectedVersion,
+          expectedVersion + 1,
+          JSON.stringify({ dependsOn }),
+        );
+      const result = getTaskInDatabase(database, taskId);
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+
+function assertDependencyCanBeAdded(
+  database: DatabaseSync,
+  taskId: string,
+  dependsOn: string,
+  task: TaskResult,
+): void {
+  if (taskId === dependsOn) {
+    throw new DependencyConflictError(taskId, dependsOn, "self");
+  }
+  if (task.dependsOn.includes(dependsOn)) {
+    throw new DependencyConflictError(taskId, dependsOn, "duplicate");
+  }
+  if (task.dependsOn.length >= TASK_LIMITS.dependencies) {
+    throw new DomainError("VALIDATION_ERROR", "Input validation failed.", {
+      issues: [
+        {
+          path: "dependsOn",
+          code: "too_many",
+          message: `Expected at most ${TASK_LIMITS.dependencies} items.`,
+        },
+      ],
+    });
+  }
+  const createsCycle =
+    database
+      .prepare(
+        `WITH RECURSIVE reachable(id) AS (
+          SELECT depends_on FROM task_dependencies WHERE task_id = ?
+          UNION
+          SELECT dependency.depends_on
+          FROM task_dependencies dependency
+          JOIN reachable ON dependency.task_id = reachable.id
+        )
+        SELECT 1 FROM reachable WHERE id = ? LIMIT 1`,
+      )
+      .get(dependsOn, taskId) !== undefined;
+  if (createsCycle) {
+    throw new DependencyConflictError(taskId, dependsOn, "cycle");
+  }
+}
+
 function rowToTask(row: TaskRow): Task & { readonly runnable: boolean } {
   const task = validateTask({
     id: row.id,
@@ -422,6 +608,9 @@ function withDatabase<T>(
       error instanceof TaskNotFoundError ||
       error instanceof VersionConflictError ||
       error instanceof CursorInvalidError ||
+      error instanceof DependencyNotFoundError ||
+      error instanceof DependencyConflictError ||
+      error instanceof DomainError ||
       error instanceof StorageError
     ) {
       throw error;

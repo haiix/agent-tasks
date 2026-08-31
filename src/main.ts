@@ -9,10 +9,14 @@ import {
 import { DomainError, StorageError } from "./errors.ts";
 import { initializeDatabase } from "./storage/database.ts";
 import {
+  addTaskDependency,
   CursorInvalidError,
   createTask,
+  DependencyConflictError,
+  DependencyNotFoundError,
   getTask,
   listTasks,
+  removeTaskDependency,
   TaskNotFoundError,
   updateTask,
   VersionConflictError,
@@ -37,7 +41,14 @@ export interface CliIo {
 export interface CliResult {
   exitCode: number;
 }
-type Command = "init" | "create" | "get" | "list" | "update";
+type Command =
+  | "init"
+  | "create"
+  | "get"
+  | "list"
+  | "update"
+  | "dependency-add"
+  | "dependency-remove";
 type Format = "json" | "text";
 const COMMANDS: readonly Command[] = [
   "init",
@@ -45,6 +56,8 @@ const COMMANDS: readonly Command[] = [
   "get",
   "list",
   "update",
+  "dependency-add",
+  "dependency-remove",
 ];
 
 export function runCli(args: readonly string[], io: CliIo): CliResult {
@@ -132,6 +145,25 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
           updateTask(dbPath, taskId, expectedVersion, input),
         );
       }
+      case "dependency-add":
+      case "dependency-remove": {
+        const taskId = requiredIdentifier(parsed, "--id");
+        const dependsOn = requiredIdentifier(parsed, "--depends-on");
+        const expectedVersion = requiredInteger(
+          parsed,
+          "--expected-version",
+          1,
+        );
+        const dbPath = databasePath(command, parsed.values.get("--db"), io);
+        const changeDependency =
+          command === "dependency-add"
+            ? addTaskDependency
+            : removeTaskDependency;
+        return writeSuccess(
+          io,
+          changeDependency(dbPath, taskId, dependsOn, expectedVersion),
+        );
+      }
     }
   } catch (error) {
     if (error instanceof CliFailure)
@@ -142,11 +174,15 @@ export function runCli(args: readonly string[], io: CliIo): CliResult {
       return writeError(io, 2, error.code, error.message, error.details);
     if (
       error instanceof NotInitializedError ||
-      error instanceof TaskNotFoundError
+      error instanceof TaskNotFoundError ||
+      error instanceof DependencyNotFoundError
     ) {
       return writeError(io, 3, error.code, error.message, error.details);
     }
-    if (error instanceof VersionConflictError)
+    if (
+      error instanceof VersionConflictError ||
+      error instanceof DependencyConflictError
+    )
       return writeError(io, 4, error.code, error.message, error.details);
     if (error instanceof StorageError)
       return writeError(io, 5, error.code, error.message, error.details);
@@ -179,12 +215,28 @@ const VALUE_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
     "--cursor",
   ],
   update: ["--db", "--format", "--id", "--expected-version", "--input-json"],
+  "dependency-add": [
+    "--db",
+    "--format",
+    "--id",
+    "--depends-on",
+    "--expected-version",
+  ],
+  "dependency-remove": [
+    "--db",
+    "--format",
+    "--id",
+    "--depends-on",
+    "--expected-version",
+  ],
 };
 const FLAG_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
   init: [],
   create: [],
   get: [],
   update: [],
+  "dependency-add": [],
+  "dependency-remove": [],
   list: ["--unassigned", "--runnable"],
 };
 

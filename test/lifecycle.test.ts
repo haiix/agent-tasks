@@ -175,6 +175,18 @@ void describe("task lifecycle commands", () => {
     ]);
     assert.equal((secondPage.data.events as readonly unknown[]).length, 2);
     assert.notDeepEqual(firstPage.data.events, secondPage.data.events);
+
+    const mismatchedLimit = fixture.run([
+      "history",
+      "--id",
+      taskId,
+      "--limit",
+      "3",
+      "--cursor",
+      firstPage.data.nextCursor as string,
+    ]);
+    assert.equal(mismatchedLimit.exitCode, 2);
+    assert.equal(mismatchedLimit.error?.code, "CURSOR_INVALID");
   });
 
   void test("distinguishes version, state, assignee, and runnable conflicts", () => {

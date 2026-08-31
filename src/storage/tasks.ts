@@ -650,7 +650,9 @@ export function getTaskHistory(
   return withDatabase(dbPath, (database) => {
     requireTaskRow(database, taskId);
     const after =
-      cursor === undefined ? undefined : decodeHistoryCursor(cursor, taskId);
+      cursor === undefined
+        ? undefined
+        : decodeHistoryCursor(cursor, taskId, limit);
     const rows = database
       .prepare(
         `SELECT id, task_id, type, actor, occurred_at, from_version, to_version,
@@ -675,6 +677,7 @@ export function getTaskHistory(
           ? encodeHistoryCursor({
               v: 1,
               taskId,
+              limit,
               occurredAt: last.occurred_at,
               id: last.id,
             })
@@ -1015,6 +1018,7 @@ interface CursorPayload {
 interface HistoryCursorPayload {
   readonly v: 1;
   readonly taskId: string;
+  readonly limit: number;
   readonly occurredAt: string;
   readonly id: string;
 }
@@ -1064,6 +1068,7 @@ function encodeHistoryCursor(payload: HistoryCursorPayload): string {
 function decodeHistoryCursor(
   value: string,
   taskId: string,
+  limit: number,
 ): HistoryCursorPayload {
   try {
     const payload = JSON.parse(
@@ -1072,6 +1077,7 @@ function decodeHistoryCursor(
     if (
       payload.v !== 1 ||
       payload.taskId !== taskId ||
+      payload.limit !== limit ||
       typeof payload.occurredAt !== "string" ||
       typeof payload.id !== "string" ||
       encodeHistoryCursor(payload as HistoryCursorPayload) !== value

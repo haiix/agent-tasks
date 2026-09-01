@@ -106,7 +106,7 @@ Global options:
   --help             Show this help
   --version          Show the installed version
 
-Run taskctl commands with --db <path> to select a database.
+Use --db <path> with task and database commands to select a database.
 `;
 
 export function runCli(

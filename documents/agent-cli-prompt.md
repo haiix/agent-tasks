@@ -1,8 +1,5 @@
 # AIエージェント向けCLI利用プロンプト
 
-- Status: Accepted
-- Related issue: [#1](https://github.com/haiix/agent-tasks/issues/1)
-
 以下のプロンプトは、AIエージェントが`agent-tasks` CLIを使ってタスクを安全に取得し、作業結果を記録するための再利用可能な指示である。`<taskctl>`は実際の実行形式（配布物なら`node taskctl.mjs`、開発時なら`npm run dev --`）に、`<agent-id>`はエージェントを一意に識別する値に置き換える。
 
 ## 再利用プロンプト

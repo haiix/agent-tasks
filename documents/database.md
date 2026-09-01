@@ -1,8 +1,5 @@
 # SQLiteスキーマとマイグレーション
 
-- Status: Accepted
-- Related issue: [#6](https://github.com/haiix/agent-tasks/issues/6)
-
 ## 接続設定
 
 各SQLite接続は、利用開始時に次の設定を行う。

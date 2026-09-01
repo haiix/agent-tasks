@@ -1,8 +1,5 @@
 # 開発環境と配布方式
 
-- Status: Accepted
-- Related issues: [#10](https://github.com/haiix/agent-tasks/issues/10), [#2](https://github.com/haiix/agent-tasks/issues/2)
-
 ## 基本方針
 
 開発にはTypeScriptとESMを使用する。開発ソースは責務ごとに複数モジュールへ分割し、配布時に単一のESM `taskctl.mjs`へバンドルする。
@@ -36,22 +33,25 @@ single ESM taskctl.mjs
 
 変更を提出する前に`npm run check`を実行する。書式を修正する場合は`npm run format`を使用する。
 
-## ソース構成案
+## ソース構成
 
 ```text
 src/
   cli.ts
-  commands/
+  main.ts
   domain/
   storage/
   validation/
   errors.ts
+  id.ts
+scripts/
+  build.mjs
 test/
 dist/
   taskctl.mjs
 ```
 
-具体的な構成は実装開始時に調整できるが、CLI解析、ドメインルール、SQLite処理を分離する。
+CLI解析、ドメインルール、SQLite処理、入力検証を責務ごとに分離する。`scripts/build.mjs`が配布物を生成し、テストは`test/`に配置する。
 
 ## バリデーション
 
@@ -62,7 +62,7 @@ TypeScriptの型は実行時に消えるため、次の入力を明示的に検�
 - enum、日時、文字列長、配列、metadata
 - 状態遷移に伴う必須項目
 
-初期実装では実行時依存を増やさない手書きバリデーションを基本とする。検証コードの複雑さが問題になった場合は、バンドル可能なスキーマライブラリを再検討する。
+入力検証には、実行時依存を増やさない手書きバリデーションを使用する。
 
 ## テスト要件
 

@@ -1,8 +1,5 @@
 # タスクモデルとライフサイクル
 
-- Status: Accepted
-- Related issues: [#9](https://github.com/haiix/agent-tasks/issues/9), [#5](https://github.com/haiix/agent-tasks/issues/5), [#4](https://github.com/haiix/agent-tasks/issues/4)
-
 ## 状態
 
 初期状態は次の5種類とする。

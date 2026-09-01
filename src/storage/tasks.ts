@@ -658,7 +658,7 @@ export function getTaskHistory(
   return withDatabase(dbPath, (database) => {
     try {
       database.exec("BEGIN");
-      const taskVersion = requireTaskVersion(database, taskId);
+      const taskState = requireTaskHistoryState(database, taskId);
       const after =
         cursor === undefined
           ? undefined
@@ -674,7 +674,7 @@ export function getTaskHistory(
         .all(taskId) as unknown as TaskEventRow[];
       const history = rows.map(rowToTaskEvent);
       try {
-        validateTaskEventHistory(history, taskVersion);
+        validateTaskEventHistory(history, taskState);
       } catch (error) {
         throw new StoredTaskInvalidError(error);
       }
@@ -770,12 +770,17 @@ function requireTaskRow(database: DatabaseSync, taskId: string): void {
   }
 }
 
-function requireTaskVersion(database: DatabaseSync, taskId: string): number {
+function requireTaskHistoryState(
+  database: DatabaseSync,
+  taskId: string,
+): Readonly<{ version: unknown; status: unknown }> {
   const row = database
-    .prepare("SELECT CAST(version AS REAL) AS version FROM tasks WHERE id = ?")
-    .get(taskId) as Readonly<{ version: number }> | undefined;
+    .prepare(
+      "SELECT CAST(version AS REAL) AS version, status FROM tasks WHERE id = ?",
+    )
+    .get(taskId) as Readonly<{ version: unknown; status: unknown }> | undefined;
   if (row === undefined) throw new TaskNotFoundError(taskId);
-  return row.version;
+  return row;
 }
 
 function assertExpectedVersion(

@@ -546,6 +546,89 @@ void describe("history, export, and text output", () => {
     }
   });
 
+  void test("reports causally inconsistent stored history as DB_INVALID", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({ title: "Causal history" });
+    const taskId = created.data.task.id as string;
+    fixture.run([
+      "claim",
+      "--id",
+      taskId,
+      "--agent",
+      "agent-a",
+      "--expected-version",
+      "1",
+    ]);
+    fixture.run([
+      "transition",
+      "--id",
+      taskId,
+      "--to",
+      "done",
+      "--agent",
+      "agent-a",
+      "--expected-version",
+      "2",
+      "--input-json",
+      JSON.stringify({ result: "done" }),
+    ]);
+
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      database
+        .prepare(
+          "UPDATE task_events SET details_json = ? WHERE task_id = ? AND to_version = 3",
+        )
+        .run(
+          JSON.stringify({
+            fromStatus: "pending",
+            toStatus: "canceled",
+            blockedReason: null,
+            result: null,
+          }),
+          taskId,
+        );
+    } finally {
+      database.close();
+    }
+
+    const result = fixture.run(["history", "--id", taskId]);
+    assert.equal(result.exitCode, 5);
+    assert.equal(result.error?.code, "DB_INVALID");
+  });
+
+  void test("reports history that disagrees with the stored task status", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({ title: "Stored status" });
+    const taskId = created.data.task.id as string;
+    fixture.run([
+      "transition",
+      "--id",
+      taskId,
+      "--to",
+      "canceled",
+      "--agent",
+      "agent-a",
+      "--expected-version",
+      "1",
+    ]);
+
+    const database = new DatabaseSync(fixture.dbPath);
+    try {
+      database
+        .prepare(
+          "UPDATE tasks SET status = 'pending', completed_at = NULL WHERE id = ?",
+        )
+        .run(taskId);
+    } finally {
+      database.close();
+    }
+
+    const result = fixture.run(["history", "--id", taskId]);
+    assert.equal(result.exitCode, 5);
+    assert.equal(result.error?.code, "DB_INVALID");
+  });
+
   void test("orders same-millisecond events by causal version", () => {
     const fixture = initializedDatabase();
     const created = fixture.create({ title: "Same timestamp" });

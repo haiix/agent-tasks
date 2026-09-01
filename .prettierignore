@@ -1,3 +1,7 @@
 dist/
 node_modules/
 package-lock.json
+
+# Generated and maintained by release-please.
+.release-please-manifest.json
+CHANGELOG.md

@@ -26,7 +26,7 @@ npmからglobal installした場合は`taskctl`を使用する。単一ESM成果
 - タスクID、エージェントID、cursorは大文字小文字を区別する不透明な文字列として扱う。
 - version、limitは10進整数とし、versionは1以上でなければならない。
 
-全業務コマンドで利用できる共通オプションは次のとおり。
+タスク・DBを扱う業務コマンドで利用できる共通オプションは次のとおり。`skill install`はDBパスを受け取らず、後述するproject root解決規則を使用する。
 
 | オプション              | 既定値   | 意味                       |
 | ----------------------- | -------- | -------------------------- |
@@ -128,6 +128,33 @@ YYYY-MM-DDTHH:mm:ss.sssZ
 `--format text`は`get`、`list`、`history`だけで利用できる。これらの成功時だけstdoutへ人間向けテキストを出力する。失敗時は形式にかかわらずJSONエラーをstdoutへ出力する。それ以外のコマンドで`text`を指定すると`UNSUPPORTED_FORMAT`を返す。テキストのレイアウトは公開互換性の対象外である。
 
 ## コマンド
+
+### `skill install`
+
+```text
+taskctl skill install [--project <path>] [--format json]
+node taskctl.mjs skill install [--project <path>] [--format json]
+```
+
+同梱された`agent-tasks` Skillを`<project-root>/.agents/skills/agent-tasks/`へ配置する。`--project`がある場合はcwd基準の絶対パスへ解決し、既存ディレクトリでなければ`INVALID_ARGUMENT`とする。省略時はcwdから親方向へ`.agent-tasks/tasks.sqlite`を探索し、その親projectを使用する。`AGENT_TASKS_DB`はこの探索に使用しない。projectが見つからない場合は`NOT_INITIALIZED`を返し、ファイルを作成しない。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "projectRoot": "/project",
+    "skillPath": "/project/.agents/skills/agent-tasks",
+    "skillName": "agent-tasks",
+    "skillVersion": "1",
+    "changed": true,
+    "files": ["SKILL.md", "references/cli-workflow.md"]
+  }
+}
+```
+
+初回配置では`changed`が`true`、ファイル集合と各byte列が同梱内容に一致する再実行では`false`となる。欠落、追加、内容差分、通常ディレクトリ以外とのパス衝突、symlinkまたはjunctionは`SKILL_CONFLICT`として既存内容を変更しない。新規配置は同じfilesystem上の一時ディレクトリへ全ファイルを書いた後にrenameし、失敗時に不完全な配置先を残さない。
+
+`--client`、`--scope`、`--force`、`--db`は受け付けない。`--format`の既定値は`json`であり、`text`は`UNSUPPORTED_FORMAT`とする。
 
 ### `init`
 
@@ -337,13 +364,13 @@ versionを必要とする操作では、対象の存在、expected version、現
 
 終了コードは大分類、`error.code`はプログラムが分岐に使用する安定した詳細分類である。
 
-| 終了コード | 意味                               | `error.code`                                                                                                      |
-| ---------: | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-|          0 | 成功                               | なし                                                                                                              |
-|          2 | コマンド使用方法または入力の誤り   | `UNKNOWN_COMMAND`, `INVALID_ARGUMENT`, `INVALID_JSON`, `VALIDATION_ERROR`, `UNSUPPORTED_FORMAT`, `CURSOR_INVALID` |
-|          3 | 対象または初期化済みDBが存在しない | `TASK_NOT_FOUND`, `DEPENDENCY_NOT_FOUND`, `NOT_INITIALIZED`                                                       |
-|          4 | 楽観ロック、状態、依存関係の競合   | `VERSION_CONFLICT`, `STATE_CONFLICT`, `NOT_RUNNABLE`, `DEPENDENCY_CONFLICT`                                       |
-|          5 | ストレージまたは予期しない内部障害 | `DB_BUSY`, `DB_INVALID`, `SCHEMA_VERSION_UNSUPPORTED`, `STORAGE_ERROR`, `INTERNAL_ERROR`                          |
+| 終了コード | 意味                                        | `error.code`                                                                                                      |
+| ---------: | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+|          0 | 成功                                        | なし                                                                                                              |
+|          2 | コマンド使用方法または入力の誤り            | `UNKNOWN_COMMAND`, `INVALID_ARGUMENT`, `INVALID_JSON`, `VALIDATION_ERROR`, `UNSUPPORTED_FORMAT`, `CURSOR_INVALID` |
+|          3 | 対象または初期化済みDBが存在しない          | `TASK_NOT_FOUND`, `DEPENDENCY_NOT_FOUND`, `NOT_INITIALIZED`                                                       |
+|          4 | 楽観ロック、状態、依存関係、Skill配置の競合 | `VERSION_CONFLICT`, `STATE_CONFLICT`, `NOT_RUNNABLE`, `DEPENDENCY_CONFLICT`, `SKILL_CONFLICT`                     |
+|          5 | ストレージまたは予期しない内部障害          | `DB_BUSY`, `DB_INVALID`, `SCHEMA_VERSION_UNSUPPORTED`, `STORAGE_ERROR`, `INTERNAL_ERROR`                          |
 
 エラー詳細は次の規則に従う。
 
@@ -355,6 +382,7 @@ versionを必要とする操作では、対象の存在、expected version、現
 - `STATE_CONFLICT`: `taskId`、`actualStatus`、可能なら`allowedStatuses`
 - `NOT_RUNNABLE`: `taskId`、`incompleteDependencyIds`
 - `DEPENDENCY_CONFLICT`: `taskId`、`dependsOn`、`reason`。reasonは`self`、`duplicate`、`cycle`のいずれか
+- `SKILL_CONFLICT`: `skillPath`
 - `NOT_INITIALIZED`、DB関連エラー: `dbPath`
 
 複数の入力検証エラーは、`path`のUnicodeコードポイント昇順で`issues`へすべて格納する。セキュリティ上不要なスタックトレース、SQL、認証情報、環境変数の値はレスポンスへ含めない。

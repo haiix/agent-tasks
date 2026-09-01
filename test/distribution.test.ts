@@ -47,6 +47,19 @@ void test("the single ESM artifact runs without repository files", async () => {
   );
   assert.equal(created.exitCode, 0);
   assert.equal(readTaskTitle(created.response), "Smoke test");
+  const installedSkill = await runArtifact(
+    isolatedCliPath,
+    ["skill", "install"],
+    directory,
+  );
+  assert.equal(installedSkill.exitCode, 0);
+  assert.equal(installedSkill.response.data.changed, true);
+  assert.deepEqual(
+    readFileSync(
+      join(directory, ".agents", "skills", "agent-tasks", "SKILL.md"),
+    ),
+    readFileSync(join(repositoryRoot, "skills", "agent-tasks", "SKILL.md")),
+  );
 });
 
 void test("the npm tarball installs globally with the taskctl command", async () => {
@@ -111,6 +124,18 @@ void test("the npm tarball installs globally with the taskctl command", async ()
   const initialized = await runCommand(commandPath, ["init"], directory);
   assert.equal(initialized.exitCode, 0, initialized.stderr);
   assert.equal(JSON.parse(initialized.stdout).ok, true);
+
+  const installedSkill = await runCommand(
+    commandPath,
+    ["skill", "install"],
+    directory,
+  );
+  assert.equal(installedSkill.exitCode, 0, installedSkill.stderr);
+  assert.equal(JSON.parse(installedSkill.stdout).data.changed, true);
+  assert.equal(
+    existsSync(join(directory, ".agents", "skills", "agent-tasks", "SKILL.md")),
+    true,
+  );
 });
 
 interface ArtifactResponse {

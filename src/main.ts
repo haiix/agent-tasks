@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 import {
   PRIORITIES,
@@ -7,6 +8,7 @@ import {
   type TaskStatus,
 } from "./domain/task.ts";
 import { DomainError, StorageError } from "./errors.ts";
+import { installSkill, SkillConflictError } from "./skill.ts";
 import { initializeDatabase } from "./storage/database.ts";
 import {
   addTaskDependency,
@@ -64,7 +66,8 @@ type Command =
   | "history"
   | "export"
   | "dependency-add"
-  | "dependency-remove";
+  | "dependency-remove"
+  | "skill-install";
 type Format = "json" | "text";
 const COMMANDS: readonly Command[] = [
   "init",
@@ -79,6 +82,7 @@ const COMMANDS: readonly Command[] = [
   "export",
   "dependency-add",
   "dependency-remove",
+  "skill-install",
 ];
 
 const HELP_TEXT = `Usage: taskctl <command> [options]
@@ -96,6 +100,7 @@ Commands:
   export             Export all task data
   dependency-add     Add a task dependency
   dependency-remove  Remove a task dependency
+  skill install      Install the agent-tasks Skill in a project
 
 Global options:
   --help             Show this help
@@ -113,16 +118,35 @@ export function runCli(
     return writeText(io, HELP_TEXT);
   if (args.length === 1 && args[0] === "--version")
     return writeText(io, `${metadata.version}\n`);
-  const command = args[0] ?? null;
-  if (command === null)
+  const topLevelCommand = args[0] ?? null;
+  if (topLevelCommand === null)
     return writeError(io, 2, "INVALID_ARGUMENT", "A command is required.", {});
-  if (!COMMANDS.includes(command as Command)) {
+  const command =
+    topLevelCommand === "skill" ? "skill-install" : topLevelCommand;
+  const commandArgs =
+    topLevelCommand === "skill" ? args.slice(2) : args.slice(1);
+  if (topLevelCommand === "skill" && args[1] !== "install") {
+    const requested = args[1] === undefined ? "skill" : `skill ${args[1]}`;
+    return writeError(
+      io,
+      2,
+      "UNKNOWN_COMMAND",
+      `Unknown command: ${requested}`,
+      {
+        command: requested,
+      },
+    );
+  }
+  if (
+    !COMMANDS.includes(command as Command) ||
+    (command === "skill-install" && topLevelCommand !== "skill")
+  ) {
     return writeError(io, 2, "UNKNOWN_COMMAND", `Unknown command: ${command}`, {
       command,
     });
   }
   try {
-    const parsed = parseOptions(command as Command, args.slice(1));
+    const parsed = parseOptions(command as Command, commandArgs);
     const format = parseFormat(parsed.values.get("--format"));
     if (
       format === "text" &&
@@ -145,6 +169,13 @@ export function runCli(
           schemaVersion: result.schemaVersion,
           created: result.created,
         });
+      }
+      case "skill-install": {
+        const projectRoot = resolveSkillProjectRoot(
+          parsed.values.get("--project"),
+          io.cwd ?? process.cwd(),
+        );
+        return writeSuccess(io, installSkill(projectRoot));
       }
       case "create": {
         const input = validateCreateTaskInput(readJson(parsed, io));
@@ -309,7 +340,8 @@ export function runCli(
     if (
       error instanceof VersionConflictError ||
       error instanceof NotRunnableError ||
-      error instanceof DependencyConflictError
+      error instanceof DependencyConflictError ||
+      error instanceof SkillConflictError
     )
       return writeError(io, 4, error.code, error.message, error.details);
     if (error instanceof StorageError)
@@ -370,6 +402,7 @@ const VALUE_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
     "--depends-on",
     "--expected-version",
   ],
+  "skill-install": ["--project", "--format"],
 };
 const FLAG_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
   init: [],
@@ -383,6 +416,7 @@ const FLAG_OPTIONS: Readonly<Record<Command, readonly string[]>> = {
   export: [],
   "dependency-add": [],
   "dependency-remove": [],
+  "skill-install": [],
   list: ["--unassigned", "--runnable"],
 };
 
@@ -435,6 +469,33 @@ function databasePath(
       ? {}
       : { environmentPath: environment[DATABASE_ENVIRONMENT_VARIABLE] }),
   });
+}
+
+function resolveSkillProjectRoot(
+  explicitProject: string | undefined,
+  cwd: string,
+): string {
+  if (explicitProject !== undefined) {
+    const projectRoot = resolve(cwd, explicitProject);
+    try {
+      if (statSync(projectRoot).isDirectory()) return projectRoot;
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+    }
+    throw invalidArgument(
+      "--project",
+      explicitProject,
+      "The project path must be an existing directory.",
+    );
+  }
+  const dbPath = resolveDatabasePath({ command: "skill-install", cwd });
+  return dirname(dirname(dbPath));
+}
+
+function isMissingPathError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error))
+    return false;
+  return error.code === "ENOENT" || error.code === "ENOTDIR";
 }
 
 function readJson(options: ParsedOptions, io: CliIo): unknown {

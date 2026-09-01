@@ -16,7 +16,10 @@ taskctl --help
 
 ```shell
 taskctl init
+taskctl skill install
 ```
+
+`taskctl skill install`は、初期化済みprojectをカレントディレクトリから探索し、同梱のAgent Skillを`<project>/.agents/skills/agent-tasks/`へ配置する。同じ内容が既にある場合は変更せず成功し、利用者による編集や追加ファイルがある場合は上書きしない。別のprojectを指定する場合は`--project <path>`を使用する。
 
 ## 開発
 
@@ -35,6 +38,7 @@ npm run check
 
 ```shell
 npm run dev -- init
+npm run dev -- skill install
 ```
 
 保存先は`--db <path>`または環境変数`AGENT_TASKS_DB`でも指定でき、`--db`が優先される。

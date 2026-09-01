@@ -55,6 +55,38 @@ void test("reports an unknown command without throwing", () => {
   });
 });
 
+void test("prints top-level help as human-readable text", () => {
+  let stdout = "";
+
+  const result = runCli(["--help"], {
+    writeStdout(value) {
+      stdout += value;
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(stdout, /^Usage: taskctl <command> \[options\]/);
+  assert.match(stdout, /dependency-remove/);
+  assert.equal(stdout.endsWith("\n"), true);
+});
+
+void test("prints the provided package version", () => {
+  let stdout = "";
+
+  const result = runCli(
+    ["--version"],
+    {
+      writeStdout(value) {
+        stdout += value;
+      },
+    },
+    { version: "1.2.3" },
+  );
+
+  assert.deepEqual(result, { exitCode: 0 });
+  assert.equal(stdout, "1.2.3\n");
+});
+
 void test("validates command input before looking for a database", () => {
   const cwd = temporaryDirectory();
   const missingId = captureCli(["get"], cwd);

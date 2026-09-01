@@ -16,7 +16,9 @@ esbuild
 single ESM taskctl.mjs
 ```
 
-配布物には実行時npm依存を持たせない。
+配布物には実行時npm依存を持たせない。npmでは`@haiix/agent-tasks`として公開し、global install時に`taskctl`コマンドを作成する。パッケージには`package.json`、`README.md`、`LICENSE`、`dist/taskctl.mjs`だけを含める。
+
+利用者側のNode.js要件は24以降とする。npm公開とリリース運用の詳細は[npm公開手順](releasing.md)を参照する。
 
 ## ツール
 
@@ -74,6 +76,7 @@ TypeScriptの型は実行時に消えるため、次の入力を明示的に検�
 - stdoutが常に解析可能なJSONであること
 - DB初期化、マイグレーション、ロック、障害を扱えること
 - 単一ESM成果物だけで実行できること
+- npm tarballをglobal installし、`taskctl`で`--help`、`--version`、主要操作を実行できること
 - Windows、macOS、Linuxで動作すること
 
 テストではプロジェクトの実データを使用せず、毎回一時ディレクトリと一時DBを作成する。

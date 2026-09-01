@@ -1,10 +1,29 @@
 {
-  "name": "agent-tasks",
+  "name": "@haiix/agent-tasks",
   "version": "0.0.0",
-  "private": true,
+  "description": "Local task management CLI for AI agents",
   "type": "module",
+  "bin": {
+    "taskctl": "dist/taskctl.mjs"
+  },
+  "files": [
+    "dist/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haiix/agent-tasks.git"
+  },
+  "homepage": "https://github.com/haiix/agent-tasks#readme",
+  "bugs": {
+    "url": "https://github.com/haiix/agent-tasks/issues"
+  },
+  "license": "MIT",
   "engines": {
     "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "dev": "node src/cli.ts",
@@ -15,7 +34,8 @@
     "test": "npm run build && npm run test:run",
     "test:run": "node --test test/*.test.ts",
     "build": "node scripts/build.mjs",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm test"
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
+    "prepack": "npm run build"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11",

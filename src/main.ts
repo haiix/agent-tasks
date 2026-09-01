@@ -49,6 +49,9 @@ export interface CliIo {
 export interface CliResult {
   exitCode: number;
 }
+export interface CliMetadata {
+  readonly version: string;
+}
 type Command =
   | "init"
   | "create"
@@ -78,7 +81,38 @@ const COMMANDS: readonly Command[] = [
   "dependency-remove",
 ];
 
-export function runCli(args: readonly string[], io: CliIo): CliResult {
+const HELP_TEXT = `Usage: taskctl <command> [options]
+
+Commands:
+  init               Initialize the task database
+  create             Create a task
+  get                Get a task
+  list               List tasks
+  update             Update a task
+  claim              Claim a task
+  transition         Change a task status
+  reopen             Reopen a task
+  history            Show task history
+  export             Export all task data
+  dependency-add     Add a task dependency
+  dependency-remove  Remove a task dependency
+
+Global options:
+  --help             Show this help
+  --version          Show the installed version
+
+Run taskctl commands with --db <path> to select a database.
+`;
+
+export function runCli(
+  args: readonly string[],
+  io: CliIo,
+  metadata: CliMetadata = { version: "0.0.0" },
+): CliResult {
+  if (args.length === 1 && args[0] === "--help")
+    return writeText(io, HELP_TEXT);
+  if (args.length === 1 && args[0] === "--version")
+    return writeText(io, `${metadata.version}\n`);
   const command = args[0] ?? null;
   if (command === null)
     return writeError(io, 2, "INVALID_ARGUMENT", "A command is required.", {});
@@ -631,6 +665,10 @@ function escapeTextField(value: string): string {
 }
 function writeSuccess(io: CliIo, data: object): CliResult {
   io.writeStdout(`${JSON.stringify({ ok: true, data })}\n`);
+  return { exitCode: 0 };
+}
+function writeText(io: CliIo, value: string): CliResult {
+  io.writeStdout(value);
   return { exitCode: 0 };
 }
 function writeError(

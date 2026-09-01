@@ -1,8 +1,5 @@
 # CLI仕様
 
-- Status: Accepted
-- Related issue: [#11](https://github.com/haiix/agent-tasks/issues/11)
-
 この文書は、`taskctl.mjs`のMVPにおけるプロセス境界の公開仕様である。CLIの利用者は、表示文言ではなく、終了コードとJSONレスポンスを処理する。
 
 ## 実行形式と共通規則

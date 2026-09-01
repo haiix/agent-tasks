@@ -2,9 +2,6 @@
 
 `agent-tasks`は、プロジェクト内で作業するAIエージェント向けのローカルタスク管理CLIです。サーバーや外部サービスを必要とせず、タスクの作成、検索、claim、状態遷移を機械処理しやすいインターフェースで提供します。
 
-> [!NOTE]
-> このプロジェクトは開発中です。現在はデータベース初期化、タスクの作成・取得・一覧・内容更新、依存関係の追加・解除、claim、状態遷移、再オープン、イベント履歴の取得、スナップショットのエクスポートが利用できます。
-
 ## 開発
 
 Node.js 24を使用する。
@@ -64,12 +61,6 @@ npm run dev -- export
 - [AIエージェント向けCLI利用プロンプト](documents/agent-cli-prompt.md)
 - [タスクモデルとライフサイクル](documents/task-model.md)
 - [開発環境と配布方式](documents/development.md)
-
-各文書にはステータスを記載しています。`Accepted`は現在の合意済み仕様、`Draft`は実装前に詳細の確定が必要な仕様を示します。
-
-## ロードマップ
-
-実装作業と依存関係は[GitHub Issues](https://github.com/haiix/agent-tasks/issues)で管理し、全体の実装順は[Issue #12](https://github.com/haiix/agent-tasks/issues/12)で追跡します。
 
 ## ライセンス
 

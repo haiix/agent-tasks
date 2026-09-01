@@ -112,6 +112,16 @@ void test("prefers --db and preserves an existing database on repeated init", ()
   assert.equal(existsSync(resolve(cwd, environmentPath)), false);
 });
 
+void test("accepts a database path that starts with --", () => {
+  const cwd = temporaryDirectory();
+  const explicitPath = "--tasks.sqlite";
+  const captured = captureCli(["init", "--db", explicitPath], cwd);
+
+  assert.equal(captured.result.exitCode, 0);
+  assert.equal(captured.response.data.dbPath, resolve(cwd, explicitPath));
+  assert.equal(existsSync(resolve(cwd, explicitPath)), true);
+});
+
 void test("uses AGENT_TASKS_DB when --db is absent", () => {
   const cwd = temporaryDirectory();
   const environmentPath = join("environment", "tasks.sqlite");

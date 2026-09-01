@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/haiix/agent-tasks/compare/v0.1.0...v0.2.0) (2026-09-01)
+
+
+### Added
+
+* add agent-tasks workflow skill ([#52](https://github.com/haiix/agent-tasks/issues/52)) ([a9cc83b](https://github.com/haiix/agent-tasks/commit/a9cc83bd7c922833909649ed8ac3105081388eaa))
+* add project skill installer ([#53](https://github.com/haiix/agent-tasks/issues/53)) ([580812d](https://github.com/haiix/agent-tasks/commit/580812d66a45b1c0ae67557d24220efcd3a42f11))
+
 ## 0.1.0 (2026-09-01)
 
 

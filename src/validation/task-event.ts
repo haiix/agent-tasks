@@ -94,18 +94,37 @@ export function validateTaskEvent(value: unknown): ValidatedTaskEvent {
 
 export function validateTaskEventHistory(
   events: readonly ValidatedTaskEvent[],
-  taskVersion: unknown,
+  task: Readonly<{ readonly version: unknown; readonly status: unknown }>,
 ): void {
+  const taskVersion = task.version;
   if (!Number.isSafeInteger(taskVersion) || (taskVersion as number) < 1) {
     throw new Error("Stored task version is invalid.");
   }
+  const taskStatus = requireStatus(task.status);
   if (events.length === 0 || events.at(-1)?.toVersion !== taskVersion) {
     throw new Error("Event history does not reach the stored task version.");
   }
+  let currentStatus: TaskStatus = "pending";
   for (const [index, event] of events.entries()) {
     if (event.toVersion !== index + 1) {
       throw new Error("Event history versions are not contiguous.");
     }
+    if (
+      event.type !== "claimed" &&
+      event.type !== "transitioned" &&
+      event.type !== "reopened"
+    ) {
+      continue;
+    }
+    const fromStatus = requireStatus(event.details.fromStatus);
+    const toStatus = requireStatus(event.details.toStatus);
+    if (fromStatus !== currentStatus) {
+      throw new Error("Event history statuses are not causally contiguous.");
+    }
+    currentStatus = toStatus;
+  }
+  if (currentStatus !== taskStatus) {
+    throw new Error("Event history does not reach the stored task status.");
   }
 }
 

@@ -67,6 +67,12 @@ void test("prints top-level help as human-readable text", () => {
   assert.equal(result.exitCode, 0);
   assert.match(stdout, /^Usage: taskctl <command> \[options\]/);
   assert.match(stdout, /dependency-remove/);
+  assert.match(stdout, /skill install/);
+  assert.match(
+    stdout,
+    /Use --db <path> with task and database commands to select a database\./,
+  );
+  assert.doesNotMatch(stdout, /Run taskctl commands with --db/);
   assert.equal(stdout.endsWith("\n"), true);
 });
 

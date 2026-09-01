@@ -734,6 +734,51 @@ void describe("list command", () => {
     assert.equal(mismatch.error?.code, "CURSOR_INVALID");
   });
 
+  void test("rejects malformed and stale list cursor positions", () => {
+    const fixture = initializedDatabase();
+    fixture.create({ title: "One" });
+    fixture.create({ title: "Two" });
+
+    const first = fixture.run(["list", "--limit", "1"]);
+    const cursor = first.data.nextCursor as string;
+    const payload = decodeTestCursor(cursor);
+    const invalidPayloads = [
+      { ...payload, rank: 999 },
+      { ...payload, createdAt: "not-a-time" },
+      { ...payload, id: " " },
+      { ...payload, id: "x".repeat(201) },
+      { ...payload, id: "\ud800" },
+      { ...payload, id: "missing-task" },
+      { ...payload, extra: true },
+    ];
+
+    for (const invalidPayload of invalidPayloads) {
+      const result = fixture.run([
+        "list",
+        "--limit",
+        "1",
+        "--cursor",
+        encodeTestCursor(invalidPayload),
+      ]);
+      assert.equal(result.exitCode, 2);
+      assert.equal(result.error?.code, "CURSOR_INVALID");
+    }
+
+    const updated = fixture.run([
+      "update",
+      "--id",
+      payload.id as string,
+      "--expected-version",
+      "1",
+      "--input-json",
+      JSON.stringify({ priority: "low" }),
+    ]);
+    assert.equal(updated.exitCode, 0);
+    const stale = fixture.run(["list", "--limit", "1", "--cursor", cursor]);
+    assert.equal(stale.exitCode, 2);
+    assert.equal(stale.error?.code, "CURSOR_INVALID");
+  });
+
   void test("rejects invalid filters and mutually exclusive assignment filters", () => {
     const fixture = initializedDatabase();
     const invalidStatus = fixture.run(["list", "--status", "ready"]);
@@ -981,6 +1026,17 @@ function hasUnsafeControlCharacter(value: string): boolean {
     const codePoint = character.charCodeAt(0);
     return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
   });
+}
+
+function decodeTestCursor(value: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+}
+
+function encodeTestCursor(value: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
 function initializedDatabase(): {

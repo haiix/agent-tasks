@@ -561,7 +561,7 @@ function validateNullableTimestamp(
   return validateTimestamp(value, path, issues);
 }
 
-function isValidTimestamp(value: string): boolean {
+export function isValidTimestamp(value: string): boolean {
   if (!RFC_3339_UTC_MILLISECONDS.test(value)) return false;
   const milliseconds = Date.parse(value);
   return (

@@ -16,6 +16,8 @@ import { DomainError, StorageError } from "../errors.ts";
 import { generateId } from "../id.ts";
 import {
   TASK_LIMITS,
+  isValidTimestamp,
+  isWellFormedUnicode,
   validateTask,
   validateTaskDependencies,
 } from "../validation/task.ts";
@@ -613,6 +615,14 @@ export function listTasks(dbPath: string, filters: ListFilters): ListResult {
         WHERE rd.task_id = t.id AND rt.status <> 'done')`);
     }
     if (after !== undefined) {
+      const referencedTask = database
+        .prepare(
+          `SELECT 1 FROM tasks t
+           WHERE ${[...where, `${PRIORITY_RANK} = ?`, "t.created_at = ?", "t.id = ?"].join(" AND ")}
+           LIMIT 1`,
+        )
+        .get(...parameters, after.rank, after.createdAt, after.id);
+      if (referencedTask === undefined) throw new CursorInvalidError();
       where.push(`(${PRIORITY_RANK} > ? OR (${PRIORITY_RANK} = ? AND
         (t.created_at > ? OR (t.created_at = ? AND t.id > ?))))`);
       parameters.push(
@@ -677,6 +687,15 @@ export function getTaskHistory(
         validateTaskEventHistory(history, taskState);
       } catch (error) {
         throw new StoredTaskInvalidError(error);
+      }
+      const currentVersion = history.at(-1)?.toVersion;
+      if (
+        after !== undefined &&
+        (currentVersion === undefined ||
+          after.toVersion >= currentVersion ||
+          !history.some((event) => event.toVersion === after.toVersion))
+      ) {
+        throw new CursorInvalidError();
       }
       const remaining =
         after === undefined
@@ -1102,18 +1121,28 @@ function decodeCursor(value: string, signature: string): CursorPayload {
   try {
     const payload = JSON.parse(
       Buffer.from(value, "base64url").toString("utf8"),
-    ) as Partial<CursorPayload>;
+    ) as unknown;
     if (
+      !hasExactKeys<CursorPayload>(payload, [
+        "v",
+        "signature",
+        "rank",
+        "createdAt",
+        "id",
+      ]) ||
       payload.v !== 1 ||
       payload.signature !== signature ||
       !Number.isInteger(payload.rank) ||
+      payload.rank < 0 ||
+      payload.rank > 3 ||
       typeof payload.createdAt !== "string" ||
-      typeof payload.id !== "string" ||
-      encodeCursor(payload as CursorPayload) !== value
+      !isValidTimestamp(payload.createdAt) ||
+      !isValidIdentifier(payload.id) ||
+      encodeCursor(payload) !== value
     ) {
       throw new CursorInvalidError();
     }
-    return payload as CursorPayload;
+    return payload;
   } catch (error) {
     if (error instanceof CursorInvalidError) throw error;
     throw new CursorInvalidError();
@@ -1132,22 +1161,51 @@ function decodeHistoryCursor(
   try {
     const payload = JSON.parse(
       Buffer.from(value, "base64url").toString("utf8"),
-    ) as Partial<HistoryCursorPayload>;
+    ) as unknown;
     if (
+      !hasExactKeys<HistoryCursorPayload>(payload, [
+        "v",
+        "taskId",
+        "limit",
+        "toVersion",
+      ]) ||
       payload.v !== 1 ||
       payload.taskId !== taskId ||
       payload.limit !== limit ||
       !Number.isSafeInteger(payload.toVersion) ||
-      (payload.toVersion as number) < 1 ||
-      encodeHistoryCursor(payload as HistoryCursorPayload) !== value
+      payload.toVersion < 1 ||
+      encodeHistoryCursor(payload) !== value
     ) {
       throw new CursorInvalidError();
     }
-    return payload as HistoryCursorPayload;
+    return payload;
   } catch (error) {
     if (error instanceof CursorInvalidError) throw error;
     throw new CursorInvalidError();
   }
+}
+
+function hasExactKeys<T extends object>(
+  value: unknown,
+  keys: readonly (keyof T & string)[],
+): value is T {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const actualKeys = Object.keys(value);
+  return (
+    actualKeys.length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key))
+  );
+}
+
+function isValidIdentifier(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    [...value].length <= TASK_LIMITS.identifierCharacters &&
+    isWellFormedUnicode(value)
+  );
 }
 
 function priorityRank(priority: Priority): number {

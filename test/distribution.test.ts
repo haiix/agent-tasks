@@ -4,6 +4,8 @@ import {
   copyFileSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
 } from "node:fs";
@@ -15,6 +17,10 @@ import { afterEach, test } from "node:test";
 const builtCliPath = fileURLToPath(
   new URL("../dist/taskctl.mjs", import.meta.url),
 );
+const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+const packageMetadata = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { readonly name: string; readonly version: string };
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -43,6 +49,70 @@ void test("the single ESM artifact runs without repository files", async () => {
   assert.equal(readTaskTitle(created.response), "Smoke test");
 });
 
+void test("the npm tarball installs globally with the taskctl command", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-package-"));
+  temporaryDirectories.push(directory);
+  const packDirectory = join(directory, "pack");
+  const installPrefix = join(directory, "global");
+  const npmCache = join(directory, "npm-cache");
+  mkdirSync(packDirectory);
+
+  const packed = await runNpm(
+    ["pack", "--ignore-scripts", "--json", "--pack-destination", packDirectory],
+    repositoryRoot,
+    npmCache,
+  );
+  assert.equal(packed.exitCode, 0, packed.stderr);
+  const packResults = JSON.parse(packed.stdout) as Array<{
+    readonly name: string;
+    readonly filename: string;
+    readonly files: Array<{ readonly path: string }>;
+  }>;
+  assert.equal(packResults.length, 1);
+  const packResult = packResults[0];
+  assert.ok(packResult);
+  assert.equal(packResult.name, packageMetadata.name);
+  assert.deepEqual(packResult.files.map(({ path }) => path).sort(), [
+    "LICENSE",
+    "README.md",
+    "dist/taskctl.mjs",
+    "package.json",
+  ]);
+
+  const tarballPath = join(packDirectory, packResult.filename);
+  const installed = await runNpm(
+    [
+      "install",
+      "--global",
+      "--ignore-scripts",
+      "--prefix",
+      installPrefix,
+      tarballPath,
+    ],
+    directory,
+    npmCache,
+  );
+  assert.equal(installed.exitCode, 0, installed.stderr);
+
+  const commandPath =
+    process.platform === "win32"
+      ? join(installPrefix, "taskctl.cmd")
+      : join(installPrefix, "bin", "taskctl");
+  assert.equal(existsSync(commandPath), true);
+
+  const version = await runCommand(commandPath, ["--version"], directory);
+  assert.equal(version.exitCode, 0, version.stderr);
+  assert.equal(version.stdout, `${packageMetadata.version}\n`);
+
+  const help = await runCommand(commandPath, ["--help"], directory);
+  assert.equal(help.exitCode, 0, help.stderr);
+  assert.match(help.stdout, /^Usage: taskctl/);
+
+  const initialized = await runCommand(commandPath, ["init"], directory);
+  assert.equal(initialized.exitCode, 0, initialized.stderr);
+  assert.equal(JSON.parse(initialized.stdout).ok, true);
+});
+
 interface ArtifactResponse {
   readonly ok: boolean;
   readonly data: Record<string, unknown>;
@@ -53,10 +123,48 @@ function runArtifact(
   args: readonly string[],
   cwd: string,
 ): Promise<{ readonly exitCode: number; readonly response: ArtifactResponse }> {
+  return runCommand(process.execPath, [artifactPath, ...args], cwd).then(
+    ({ exitCode, stdout, stderr }) => {
+      assert.equal(stderr, "");
+      return {
+        exitCode,
+        response: JSON.parse(stdout) as ArtifactResponse,
+      };
+    },
+  );
+}
+
+function runNpm(
+  args: readonly string[],
+  cwd: string,
+  cache: string,
+): Promise<ProcessResult> {
+  const npmEntryPoint = process.env.npm_execpath;
+  assert.notEqual(npmEntryPoint, undefined, "run tests through npm");
+  return runCommand(process.execPath, [npmEntryPoint as string, ...args], cwd, {
+    ...process.env,
+    npm_config_cache: cache,
+  });
+}
+
+interface ProcessResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function runCommand(
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [artifactPath, ...args], {
+    const child = spawn(command, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32" && command.endsWith(".cmd"),
+      env: environment,
     });
     let stdout = "";
     let stderr = "";
@@ -71,12 +179,10 @@ function runArtifact(
     child.once("error", reject);
     child.once("close", (exitCode) => {
       if (exitCode === null) {
-        reject(new Error(`Artifact exited without a code: ${stderr}`));
+        reject(new Error(`Process exited without a code: ${stderr}`));
         return;
       }
-      assert.equal(stderr, "");
-      const response = JSON.parse(stdout) as ArtifactResponse;
-      resolve({ exitCode, response });
+      resolve({ exitCode, stdout, stderr });
     });
   });
 }

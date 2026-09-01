@@ -49,7 +49,9 @@ feat!: テンプレート構文を変更する
 2. リリースPull Requestで、提案されたバージョン、`CHANGELOG.md`、各バージョンファイルを確認します。
 3. リリースする節目でそのPull Requestをマージします。
 4. 次回の定期実行時、または`Prepare release` workflowの手動実行時に、Release Pleaseが`v0.1.0`形式のタグとGitHub Releaseを作成します。
-5. npmへの公開は、公開方針が決まるまで自動では行いません。
+5. GitHub Releaseの公開を契機に`Publish to npm` workflowが`@haiix/agent-tasks`をnpmへ公開します。
+
+初回公開のブートストラップ、npm Trusted Publishing、公開後の確認と失敗時の対応は[`documents/releasing.md`](documents/releasing.md)を参照してください。
 
 次のバージョンは、前回のタグ以降にマージされた変更から決まります。バージョンを例外的に指定する場合は、対象コミットの本文に`Release-As: 0.4.0`のようなフッターを記載します。
 

@@ -12,6 +12,7 @@
 | [agent-cli-prompt.md](agent-cli-prompt.md) | AIエージェント向けCLI利用プロンプト    |
 | [task-model.md](task-model.md)             | タスク項目、状態、遷移、依存関係       |
 | [development.md](development.md)           | TypeScript/ESM開発環境、ビルド、テスト |
+| [releasing.md](releasing.md)               | npm公開、Trusted Publishing、検証      |
 
 ## 記述ルール
 

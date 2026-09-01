@@ -9,7 +9,7 @@
 | [architecture.md](architecture.md)         | 全体構成、保存方式、データ配置         |
 | [database.md](database.md)                 | SQLiteスキーマ、マイグレーション、障害 |
 | [cli-spec.md](cli-spec.md)                 | CLIコマンド、JSON入出力、エラー        |
-| [agent-cli-prompt.md](agent-cli-prompt.md) | AIエージェント向けCLI利用プロンプト    |
+| [agent-cli-prompt.md](agent-cli-prompt.md) | Agent Skills正本への移行案内           |
 | [task-model.md](task-model.md)             | タスク項目、状態、遷移、依存関係       |
 | [development.md](development.md)           | TypeScript/ESM開発環境、ビルド、テスト |
 | [releasing.md](releasing.md)               | npm公開、Trusted Publishing、検証      |
@@ -21,6 +21,10 @@
 3. 検討案や一時的な作業メモはこのディレクトリへ置かず、合意した内容だけを反映する。
 4. CLIの挙動、JSON例、状態名、フィールド名は実装と同時に更新する。
 5. 文書間で同じ仕様を重複させず、正本となる文書へリンクする。
+
+AIエージェント向けのCLI運用指示は
+[`skills/agent-tasks/SKILL.md`](../skills/agent-tasks/SKILL.md)を正本とし、詳細な
+コマンド例は同Skillの`references/cli-workflow.md`で管理する。
 
 ## 更新時の確認
 

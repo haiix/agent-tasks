@@ -378,7 +378,7 @@ function parseOptions(
       continue;
     }
     const value = args[index + 1];
-    if (value === undefined || value.startsWith("--") || value.length === 0) {
+    if (value === undefined || value.length === 0) {
       throw invalidArgument(option, undefined, "An option value is required.");
     }
     values.set(option, value);

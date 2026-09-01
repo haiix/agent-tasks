@@ -54,6 +54,35 @@ void describe("create/get/update commands", () => {
     assert.deepEqual(fetched.data, created.data);
   });
 
+  void test("accepts option values that start with --", () => {
+    const fixture = initializedDatabase();
+    const created = fixture.create({
+      title: "Option-like values",
+      labels: ["--label-name"],
+    });
+    const taskId = created.data.task.id as string;
+
+    const claimed = fixture.run([
+      "claim",
+      "--id",
+      taskId,
+      "--agent",
+      "--worker",
+      "--expected-version",
+      "1",
+    ]);
+    const listed = fixture.run(["list", "--label", "--label-name"]);
+
+    assert.equal(claimed.exitCode, 0);
+    assert.equal(claimed.data.task.assignee, "--worker");
+    assert.deepEqual(
+      (listed.data.tasks as Array<Record<string, unknown>>).map(
+        (task) => task.id,
+      ),
+      [taskId],
+    );
+  });
+
   void test("supports stdin input, dependencies, update events, and optimistic locking", () => {
     const fixture = initializedDatabase();
     const dependency = fixture.create({ title: "Dependency" });

@@ -187,6 +187,25 @@ void describe("task lifecycle commands", () => {
     ]);
     assert.equal(mismatchedLimit.exitCode, 2);
     assert.equal(mismatchedLimit.error?.code, "CURSOR_INVALID");
+
+    const historyCursor = decodeTestCursor(firstPage.data.nextCursor as string);
+    for (const invalidPayload of [
+      { ...historyCursor, toVersion: 7 },
+      { ...historyCursor, toVersion: 999 },
+      { ...historyCursor, extra: true },
+    ]) {
+      const invalid = fixture.run([
+        "history",
+        "--id",
+        taskId,
+        "--limit",
+        "2",
+        "--cursor",
+        encodeTestCursor(invalidPayload),
+      ]);
+      assert.equal(invalid.exitCode, 2);
+      assert.equal(invalid.error?.code, "CURSOR_INVALID");
+    }
   });
 
   void test("distinguishes version, state, assignee, and runnable conflicts", () => {
@@ -349,6 +368,17 @@ function pickLifecycle(task: Record<string, unknown>): Record<string, unknown> {
     result: task.result,
     version: task.version,
   };
+}
+
+function decodeTestCursor(value: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+}
+
+function encodeTestCursor(value: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
 interface Captured {

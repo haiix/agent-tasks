@@ -1,23 +1,22 @@
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 
-import { runCli } from "../src/main.ts";
+import { captureCliResponse } from "./support/cli-fixture.ts";
+import {
+  cleanupTemporaryDirectories,
+  createTemporaryDirectory,
+} from "./support/temporary-directory.ts";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const skillRoot = join(repositoryRoot, "skills", "agent-tasks");
 const skillPath = join(skillRoot, "SKILL.md");
 const workflowPath = join(skillRoot, "references", "cli-workflow.md");
 const migrationPath = join(repositoryRoot, "documents", "agent-cli-prompt.md");
+
+afterEach(cleanupTemporaryDirectories);
 
 void test("agent-tasks skill has portable Agent Skills metadata", () => {
   const skill = readFileSync(skillPath, "utf8");
@@ -63,33 +62,24 @@ void test("documented taskctl examples match the implemented command parser", ()
     (match) => match[1] ?? "",
   );
   assert.ok(commands.length >= 10);
-  const emptyProject = mkdtempSync(join(tmpdir(), "agent-tasks-skill-"));
+  const emptyProject = createTemporaryDirectory("agent-tasks-skill-");
 
-  try {
-    for (const command of commands) {
-      const args = command.split(" ").map(resolvePlaceholder);
-      let stdout = "";
-      const result = runCli(args, {
-        cwd: emptyProject,
-        environment: {},
-        readStdin: () => inputFor(args),
-        writeStdout(value) {
-          stdout += value;
-        },
-      });
-      const response = JSON.parse(stdout) as {
-        readonly error?: { readonly code?: string };
-      };
-      assert.notEqual(
-        result.exitCode,
-        2,
-        `documented command was rejected by the parser: taskctl ${command}`,
-      );
-      assert.notEqual(response.error?.code, "INVALID_ARGUMENT");
-      assert.notEqual(response.error?.code, "VALIDATION_ERROR");
-    }
-  } finally {
-    rmSync(emptyProject, { recursive: true, force: true });
+  for (const command of commands) {
+    const args = command.split(" ").map(resolvePlaceholder);
+    const { result, response } = captureCliResponse<{
+      readonly error?: { readonly code?: string };
+    }>(args, {
+      cwd: emptyProject,
+      environment: {},
+      readStdin: () => inputFor(args),
+    });
+    assert.notEqual(
+      result.exitCode,
+      2,
+      `documented command was rejected by the parser: taskctl ${command}`,
+    );
+    assert.notEqual(response.error?.code, "INVALID_ARGUMENT");
+    assert.notEqual(response.error?.code, "VALIDATION_ERROR");
   }
 });
 

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import {
   existsSync,
-  mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -9,26 +8,24 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { runCli } from "../src/main.ts";
 import {
   bundledSkill,
   installSkill,
   validateSkillBundle,
 } from "../src/skill.ts";
+import { captureCliResponse } from "./support/cli-fixture.ts";
+import {
+  cleanupTemporaryDirectories,
+  createTemporaryDirectory,
+} from "./support/temporary-directory.ts";
 
-const temporaryDirectories: string[] = [];
 const sourceRoot = resolve(import.meta.dirname, "..", "skills", "agent-tasks");
 const expectedFiles = ["SKILL.md", "references/cli-workflow.md"];
 
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+afterEach(cleanupTemporaryDirectories);
 
 void test("installs the embedded skill explicitly and is idempotent", () => {
   const project = temporaryDirectory();
@@ -238,9 +235,7 @@ void test("rejects unsafe embedded paths at runtime", () => {
 });
 
 function temporaryDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-skill-install-"));
-  temporaryDirectories.push(directory);
-  return directory;
+  return createTemporaryDirectory("agent-tasks-skill-install-");
 }
 
 function capture(
@@ -248,15 +243,11 @@ function capture(
   cwd: string,
   environment: Readonly<Record<string, string | undefined>> = {},
 ) {
-  let stdout = "";
-  const result = runCli(args, {
+  const { result, response } = captureCliResponse<Response>(args, {
     cwd,
     environment,
-    writeStdout(value) {
-      stdout += value;
-    },
   });
-  return { result, response: JSON.parse(stdout) as Response };
+  return { result, response };
 }
 
 function snapshot(root: string): Readonly<Record<string, string>> {

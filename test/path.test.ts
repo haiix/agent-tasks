@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
-import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join, posix, win32 } from "node:path";
-import { describe, test } from "node:test";
+import { afterEach, describe, test } from "node:test";
 
 import { StorageError } from "../src/errors.ts";
 import {
   NotInitializedError,
   resolveDatabasePath,
 } from "../src/storage/path.ts";
+import {
+  cleanupTemporaryDirectories,
+  createTemporaryDirectory,
+} from "./support/temporary-directory.ts";
+
+afterEach(cleanupTemporaryDirectories);
 
 void describe("database path resolution", () => {
   void test("prefers --db over the environment and resolves it from cwd", () => {
@@ -74,24 +79,20 @@ void describe("database path resolution", () => {
   });
 
   void test("skips a directory named tasks.sqlite and continues searching parents", () => {
-    const root = mkdtempSync(join(tmpdir(), "agent-tasks-path-"));
+    const root = createTemporaryDirectory("agent-tasks-path-");
     const project = join(root, "project");
     const child = join(project, "packages", "app");
     const childCandidate = join(child, ".agent-tasks", "tasks.sqlite");
     const parentCandidate = join(project, ".agent-tasks", "tasks.sqlite");
 
-    try {
-      mkdirSync(childCandidate, { recursive: true });
-      mkdirSync(join(project, ".agent-tasks"), { recursive: true });
-      closeSync(openSync(parentCandidate, "wx"));
+    mkdirSync(childCandidate, { recursive: true });
+    mkdirSync(join(project, ".agent-tasks"), { recursive: true });
+    closeSync(openSync(parentCandidate, "wx"));
 
-      assert.equal(
-        resolveDatabasePath({ command: "list", cwd: child }),
-        parentCandidate,
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    assert.equal(
+      resolveDatabasePath({ command: "list", cwd: child }),
+      parentCandidate,
+    );
   });
 
   void test("returns NOT_INITIALIZED without creating a database", () => {

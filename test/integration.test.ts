@@ -1,19 +1,17 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, test } from "node:test";
 
-const cliPath = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
-const temporaryDirectories: string[] = [];
+import {
+  cleanupTemporaryDirectories,
+  createTemporaryDirectory,
+} from "./support/temporary-directory.ts";
 
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+const cliPath = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+afterEach(cleanupTemporaryDirectories);
 
 void describe("CLI process integration", () => {
   void test("runs the main lifecycle against a real database", async () => {
@@ -118,8 +116,7 @@ interface ProcessResult {
 }
 
 function temporaryDatabase() {
-  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-integration-"));
-  temporaryDirectories.push(directory);
+  const directory = createTemporaryDirectory("agent-tasks-integration-");
   const dbPath = join(directory, "tasks.sqlite");
   const run = (args: readonly string[]) =>
     runCliProcess([...args, "--db", dbPath], directory);

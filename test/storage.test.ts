@@ -12,6 +12,7 @@ import {
   configureConnection,
   initializeDatabase,
   LATEST_SCHEMA_VERSION,
+  withTransaction,
 } from "../src/storage/database.ts";
 import type { Migration } from "../src/storage/migrations.ts";
 import {
@@ -22,6 +23,113 @@ import {
 afterEach(cleanupTemporaryDirectories);
 
 void describe("SQLite storage", () => {
+  void test("runs deferred and immediate transactions and returns their result", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      database.exec("CREATE TABLE values_table (value TEXT NOT NULL) STRICT");
+
+      const deferredResult = withTransaction(database, "deferred", () => {
+        assert.equal(database.isTransaction, true);
+        return "read-result";
+      });
+      const immediateResult = withTransaction(database, "immediate", () => {
+        database.prepare("INSERT INTO values_table VALUES (?)").run("saved");
+        return "write-result";
+      });
+
+      assert.equal(deferredResult, "read-result");
+      assert.equal(immediateResult, "write-result");
+      assert.equal(database.isTransaction, false);
+      assert.equal(
+        database.prepare("SELECT value FROM values_table").get()?.value,
+        "saved",
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  void test("rolls back failures and rejects nested transactions", () => {
+    const database = new DatabaseSync(":memory:");
+    const failure = new Error("operation failed");
+    try {
+      database.exec("CREATE TABLE values_table (value TEXT NOT NULL) STRICT");
+
+      assert.throws(
+        () =>
+          withTransaction(database, "immediate", () => {
+            database.prepare("INSERT INTO values_table VALUES (?)").run("lost");
+            throw failure;
+          }),
+        (error: unknown) => error === failure,
+      );
+      assert.equal(database.isTransaction, false);
+      assert.equal(
+        database.prepare("SELECT count(*) AS count FROM values_table").get()
+          ?.count,
+        0,
+      );
+
+      database.exec("BEGIN");
+      assert.throws(
+        () => withTransaction(database, "deferred", () => undefined),
+        /Nested transactions are not supported/,
+      );
+      assert.equal(database.isTransaction, true);
+      database.exec("ROLLBACK");
+    } finally {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      database.close();
+    }
+  });
+
+  void test("rejects asynchronous transaction operations before invoking them", () => {
+    const database = new DatabaseSync(":memory:");
+    let invoked = false;
+    try {
+      assert.throws(
+        () =>
+          withTransaction(
+            database,
+            "immediate",
+            // @ts-expect-error Transaction operations must not return promises.
+            async () => {
+              invoked = true;
+            },
+          ),
+        /Transaction operations must be synchronous/,
+      );
+      assert.equal(invoked, false);
+      assert.equal(database.isTransaction, false);
+    } finally {
+      database.close();
+    }
+  });
+
+  void test("rolls back promise-like results that bypass the type contract", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      database.exec("CREATE TABLE values_table (value TEXT NOT NULL) STRICT");
+      const hiddenPromiseOperation: () => unknown = () => {
+        database.prepare("INSERT INTO values_table VALUES (?)").run("lost");
+        return Promise.resolve("unexpected");
+      };
+
+      assert.throws(
+        () => withTransaction(database, "immediate", hiddenPromiseOperation),
+        /Transaction operations must be synchronous/,
+      );
+      assert.equal(database.isTransaction, false);
+      assert.equal(
+        database.prepare("SELECT count(*) AS count FROM values_table").get()
+          ?.count,
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   void test("initializes an empty database at the latest schema", () => {
     const dbPath = temporaryDatabasePath(true);
 

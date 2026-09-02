@@ -83,7 +83,7 @@ export function applyMigrations(
   const now = options.now ?? (() => new Date().toISOString());
 
   validateMigrationDefinitions(migrations, dbPath);
-  runTransaction(database, () => {
+  withTransaction(database, "immediate", () => {
     database.exec(SCHEMA_MIGRATIONS_SQL);
     validateAppliedMigrations(database, migrations, dbPath);
 
@@ -264,15 +264,48 @@ function getMigration(
     .get(version) as unknown as MigrationRow | undefined;
 }
 
-function runTransaction(database: DatabaseSync, operation: () => void): void {
-  database.exec("BEGIN IMMEDIATE");
+export type TransactionMode = "deferred" | "immediate";
+
+type SynchronousResult<T> = T extends PromiseLike<unknown> ? never : T;
+
+export function withTransaction<T>(
+  database: DatabaseSync,
+  mode: TransactionMode,
+  operation: () => SynchronousResult<T>,
+): T {
+  if (database.isTransaction) {
+    throw new Error("Nested transactions are not supported.");
+  }
+  if (operation.constructor.name === "AsyncFunction") {
+    throw new TypeError("Transaction operations must be synchronous.");
+  }
+
+  database.exec(mode === "immediate" ? "BEGIN IMMEDIATE" : "BEGIN");
   try {
-    operation();
+    const result = operation();
+    if (isPromiseLike(result)) {
+      if (result instanceof Promise) void result.catch(() => undefined);
+      throw new TypeError("Transaction operations must be synchronous.");
+    }
     database.exec("COMMIT");
+    return result as T;
   } catch (error) {
-    if (database.isTransaction) database.exec("ROLLBACK");
+    if (database.isTransaction) {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        // Preserve the operation error as the transaction helper's contract.
+      }
+    }
     throw error;
   }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (typeof value === "object" && value !== null) ||
+    typeof value === "function"
+    ? typeof (value as { readonly then?: unknown }).then === "function"
+    : false;
 }
 
 export function toStorageError(error: unknown, dbPath: string): StorageError {

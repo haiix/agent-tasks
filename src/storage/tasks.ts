@@ -30,6 +30,7 @@ import {
   configureConnection,
   toStorageError,
   verifyDatabaseSchema,
+  withTransaction,
 } from "./database.ts";
 
 export class TaskNotFoundError extends Error {
@@ -215,8 +216,7 @@ export function createTask(
     const now = (options.now ?? (() => new Date().toISOString()))();
     const makeId = options.generateId ?? generateId;
     const id = makeId();
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    return withTransaction(database, "immediate", () => {
       for (const dependencyId of input.dependsOn) {
         requireTaskRow(database, dependencyId);
       }
@@ -252,12 +252,8 @@ export function createTask(
         ) VALUES (?, ?, 'created', NULL, ?, NULL, 1, ?)`,
         )
         .run(makeId(), id, now, JSON.stringify(result));
-      database.exec("COMMIT");
       return result;
-    } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   });
 }
 
@@ -278,8 +274,7 @@ export function updateTask(
   } = {},
 ): TaskResult {
   return withDatabase(dbPath, (database) => {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
       if (before.task.version !== expectedVersion) {
         throw new VersionConflictError(
@@ -331,12 +326,8 @@ export function updateTask(
           JSON.stringify({ changes }),
         );
       const result = getTaskInDatabase(database, taskId);
-      database.exec("COMMIT");
       return result;
-    } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   });
 }
 
@@ -351,8 +342,7 @@ export function claimTask(
   } = {},
 ): TaskResult {
   return withDatabase(dbPath, (database) => {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
       assertExpectedVersion(before, expectedVersion);
       assertStatus(taskId, before.task.status, ["pending"]);
@@ -388,12 +378,8 @@ export function claimTask(
         },
       });
       const result = getTaskInDatabase(database, taskId);
-      database.exec("COMMIT");
       return result;
-    } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   });
 }
 
@@ -410,8 +396,7 @@ export function transitionTask(
   } = {},
 ): TaskResult {
   return withDatabase(dbPath, (database) => {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
       assertExpectedVersion(before, expectedVersion);
       try {
@@ -471,12 +456,8 @@ export function transitionTask(
         },
       });
       const result = getTaskInDatabase(database, taskId);
-      database.exec("COMMIT");
       return result;
-    } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   });
 }
 
@@ -491,8 +472,7 @@ export function reopenTask(
   } = {},
 ): TaskResult {
   return withDatabase(dbPath, (database) => {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
       assertExpectedVersion(before, expectedVersion);
       try {
@@ -531,12 +511,8 @@ export function reopenTask(
         },
       });
       const result = getTaskInDatabase(database, taskId);
-      database.exec("COMMIT");
       return result;
-    } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   });
 }
 
@@ -666,8 +642,7 @@ export function getTaskHistory(
   cursor?: string,
 ): HistoryResult {
   return withDatabase(dbPath, (database) => {
-    try {
-      database.exec("BEGIN");
+    return withTransaction(database, "deferred", () => {
       const taskState = requireTaskHistoryState(database, taskId);
       const after =
         cursor === undefined
@@ -716,12 +691,8 @@ export function getTaskHistory(
               })
             : null,
       };
-      database.exec("COMMIT");
       return result;
-    } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   });
 }
 
@@ -730,8 +701,7 @@ export function exportTasks(
   options: { readonly now?: () => string } = {},
 ): ExportResult {
   return withDatabase(dbPath, (database) => {
-    database.exec("BEGIN");
-    try {
+    return withTransaction(database, "deferred", () => {
       const tasks = (
         database
           .prepare(`${TASK_SELECT} ORDER BY t.id`)
@@ -749,12 +719,8 @@ export function exportTasks(
         tasks,
         dependencies,
       };
-      database.exec("COMMIT");
       return result;
-    } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   });
 }
 
@@ -959,8 +925,7 @@ function changeTaskDependency(
   },
 ): TaskResult {
   return withDatabase(dbPath, (database) => {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
       if (before.task.version !== expectedVersion) {
         throw new VersionConflictError(
@@ -1011,12 +976,8 @@ function changeTaskDependency(
           JSON.stringify({ dependsOn }),
         );
       const result = getTaskInDatabase(database, taskId);
-      database.exec("COMMIT");
       return result;
-    } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   });
 }
 

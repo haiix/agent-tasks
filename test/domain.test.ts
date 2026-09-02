@@ -5,8 +5,9 @@ import {
   ALLOWED_TRANSITIONS,
   assertAllowedTransition,
   assertCanReopen,
+  deriveTransitionPatch,
 } from "../src/domain/transition.ts";
-import type { TaskStatus } from "../src/domain/task.ts";
+import type { Task, TaskStatus } from "../src/domain/task.ts";
 import { DomainError } from "../src/errors.ts";
 
 void describe("task state transitions", () => {
@@ -52,4 +53,128 @@ void describe("task state transitions", () => {
         error instanceof DomainError && error.code === "STATE_CONFLICT",
     );
   });
+
+  void test("derives the pending transition patch", () => {
+    assert.deepEqual(
+      deriveTransitionPatch(
+        inProgressTask,
+        "pending",
+        "agent-next",
+        undefined,
+        occurredAt,
+      ),
+      {
+        assignee: null,
+        blockedReason: null,
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      },
+    );
+  });
+
+  void test("derives the in_progress transition patch", () => {
+    assert.deepEqual(
+      deriveTransitionPatch(
+        {
+          ...inProgressTask,
+          status: "pending",
+          assignee: null,
+          startedAt: null,
+        },
+        "in_progress",
+        "agent-next",
+        undefined,
+        occurredAt,
+      ),
+      {
+        assignee: "agent-next",
+        blockedReason: null,
+        result: null,
+        startedAt: occurredAt,
+        completedAt: null,
+      },
+    );
+  });
+
+  void test("derives the blocked transition patch", () => {
+    assert.deepEqual(
+      deriveTransitionPatch(
+        inProgressTask,
+        "blocked",
+        "agent-next",
+        { blockedReason: "Waiting for review" },
+        occurredAt,
+      ),
+      {
+        assignee: inProgressTask.assignee,
+        blockedReason: "Waiting for review",
+        result: null,
+        startedAt: inProgressTask.startedAt,
+        completedAt: null,
+      },
+    );
+  });
+
+  void test("derives the done transition patch", () => {
+    assert.deepEqual(
+      deriveTransitionPatch(
+        inProgressTask,
+        "done",
+        "agent-next",
+        { result: "Implemented and tested" },
+        occurredAt,
+      ),
+      {
+        assignee: inProgressTask.assignee,
+        blockedReason: null,
+        result: "Implemented and tested",
+        startedAt: inProgressTask.startedAt,
+        completedAt: occurredAt,
+      },
+    );
+  });
+
+  void test("derives the canceled transition patch", () => {
+    assert.deepEqual(
+      deriveTransitionPatch(
+        {
+          ...inProgressTask,
+          status: "blocked",
+          blockedReason: "No capacity",
+        },
+        "canceled",
+        "agent-next",
+        undefined,
+        occurredAt,
+      ),
+      {
+        assignee: inProgressTask.assignee,
+        blockedReason: null,
+        result: null,
+        startedAt: inProgressTask.startedAt,
+        completedAt: occurredAt,
+      },
+    );
+  });
 });
+
+const occurredAt = "2026-09-02T01:02:03.000Z";
+
+const inProgressTask: Task = {
+  id: "task-1",
+  title: "Test task",
+  description: "Test transition patches",
+  status: "in_progress",
+  priority: "normal",
+  assignee: "agent-current",
+  blockedReason: null,
+  result: null,
+  labels: [],
+  metadata: {},
+  createdAt: "2026-09-01T00:00:00.000Z",
+  updatedAt: "2026-09-02T00:00:00.000Z",
+  startedAt: "2026-09-01T01:00:00.000Z",
+  completedAt: null,
+  version: 3,
+};

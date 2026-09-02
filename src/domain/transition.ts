@@ -1,5 +1,10 @@
 import { DomainError } from "../errors.ts";
-import type { TaskStatus } from "./task.ts";
+import type { Task, TaskStatus, TransitionInput } from "./task.ts";
+
+export type TransitionPatch = Pick<
+  Task,
+  "assignee" | "blockedReason" | "result" | "startedAt" | "completedAt"
+>;
 
 export const ALLOWED_TRANSITIONS = {
   pending: ["in_progress", "blocked", "canceled"],
@@ -37,4 +42,59 @@ export function assertCanReopen(from: TaskStatus): void {
     `Task cannot be reopened from ${from}.`,
     { actualStatus: from, allowedStatuses: REOPENABLE_STATUSES },
   );
+}
+
+export function deriveTransitionPatch(
+  task: Task,
+  destination: TaskStatus,
+  agent: string,
+  input: TransitionInput,
+  occurredAt: string,
+): TransitionPatch {
+  if (destination === "pending") {
+    return {
+      assignee: null,
+      blockedReason: null,
+      result: null,
+      startedAt: null,
+      completedAt: null,
+    };
+  }
+  if (destination === "in_progress") {
+    return {
+      assignee: agent,
+      blockedReason: null,
+      result: null,
+      startedAt: occurredAt,
+      completedAt: null,
+    };
+  }
+  if (destination === "blocked") {
+    return {
+      assignee: task.assignee,
+      blockedReason:
+        input !== undefined && "blockedReason" in input
+          ? input.blockedReason
+          : null,
+      result: null,
+      startedAt: task.startedAt,
+      completedAt: null,
+    };
+  }
+  if (destination === "done") {
+    return {
+      assignee: task.assignee,
+      blockedReason: null,
+      result: input !== undefined && "result" in input ? input.result : null,
+      startedAt: task.startedAt,
+      completedAt: occurredAt,
+    };
+  }
+  return {
+    assignee: task.assignee,
+    blockedReason: null,
+    result: null,
+    startedAt: task.startedAt,
+    completedAt: occurredAt,
+  };
 }

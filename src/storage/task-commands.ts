@@ -2,7 +2,6 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type {
   CreateTaskInput,
-  Task,
   TaskStatus,
   TransitionInput,
   UpdateTaskInput,
@@ -10,6 +9,7 @@ import type {
 import {
   assertAllowedTransition,
   assertCanReopen,
+  deriveTransitionPatch,
 } from "../domain/transition.ts";
 import { DomainError, StorageError } from "../errors.ts";
 import { withTransaction } from "./database.ts";
@@ -219,7 +219,7 @@ export function transitionTask(
       if (to === "in_progress") assertRunnable(database, taskId);
 
       const now = dependencies.now();
-      const next = transitionValues(before.task, to, agent, input, now);
+      const next = deriveTransitionPatch(before.task, to, agent, input, now);
       const updated = database
         .prepare(
           `UPDATE tasks SET status = ?, assignee = ?, blocked_reason = ?, result = ?,
@@ -366,62 +366,4 @@ function withTaskId(error: unknown, taskId: string): unknown {
     taskId,
     ...error.details,
   });
-}
-
-function transitionValues(
-  before: Task,
-  to: TaskStatus,
-  agent: string,
-  input: TransitionInput,
-  now: string,
-): Pick<
-  Task,
-  "assignee" | "blockedReason" | "result" | "startedAt" | "completedAt"
-> {
-  if (to === "pending") {
-    return {
-      assignee: null,
-      blockedReason: null,
-      result: null,
-      startedAt: null,
-      completedAt: null,
-    };
-  }
-  if (to === "in_progress") {
-    return {
-      assignee: agent,
-      blockedReason: null,
-      result: null,
-      startedAt: now,
-      completedAt: null,
-    };
-  }
-  if (to === "blocked") {
-    return {
-      assignee: before.assignee,
-      blockedReason:
-        input !== undefined && "blockedReason" in input
-          ? input.blockedReason
-          : null,
-      result: null,
-      startedAt: before.startedAt,
-      completedAt: null,
-    };
-  }
-  if (to === "done") {
-    return {
-      assignee: before.assignee,
-      blockedReason: null,
-      result: input !== undefined && "result" in input ? input.result : null,
-      startedAt: before.startedAt,
-      completedAt: now,
-    };
-  }
-  return {
-    assignee: before.assignee,
-    blockedReason: null,
-    result: null,
-    startedAt: before.startedAt,
-    completedAt: now,
-  };
 }

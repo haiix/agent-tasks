@@ -34,9 +34,9 @@ import {
   NotInitializedError,
   resolveDatabasePath,
 } from "./storage/path.ts";
+import { isValidIdentifier } from "./validation/primitives.ts";
 import {
   TASK_LIMITS,
-  isWellFormedUnicode,
   validateCreateTaskInput,
   validateTransitionInput,
   validateUpdateTaskInput,
@@ -531,11 +531,7 @@ function requiredIdentifier(options: ParsedOptions, name: string): string {
   const value = options.values.get(name);
   if (value === undefined)
     throw invalidArgument(name, undefined, "A required option is missing.");
-  if (
-    [...value].length > TASK_LIMITS.identifierCharacters ||
-    value.trim().length === 0 ||
-    !isWellFormedUnicode(value)
-  ) {
+  if (!isValidIdentifier(value, TASK_LIMITS.identifierCharacters)) {
     throw invalidArgument(name, value, "Invalid identifier.");
   }
   return value;

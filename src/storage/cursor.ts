@@ -1,9 +1,11 @@
 import type { Priority } from "../domain/task.ts";
 import {
-  TASK_LIMITS,
+  hasExactKeys,
+  isPlainObject,
+  isValidIdentifier,
   isValidTimestamp,
-  isWellFormedUnicode,
-} from "../validation/task.ts";
+} from "../validation/primitives.ts";
+import { TASK_LIMITS } from "../validation/task.ts";
 import { CursorInvalidError } from "./storage-errors.ts";
 import type { ListFilters } from "./task-types.ts";
 
@@ -44,6 +46,7 @@ export function decodeCursor(value: string, signature: string): CursorPayload {
       Buffer.from(value, "base64url").toString("utf8"),
     ) as unknown;
     if (
+      !isPlainObject(payload) ||
       !hasExactKeys<CursorPayload>(payload, [
         "v",
         "signature",
@@ -58,7 +61,7 @@ export function decodeCursor(value: string, signature: string): CursorPayload {
       payload.rank > 3 ||
       typeof payload.createdAt !== "string" ||
       !isValidTimestamp(payload.createdAt) ||
-      !isValidIdentifier(payload.id) ||
+      !isValidIdentifier(payload.id, TASK_LIMITS.identifierCharacters) ||
       encodeCursor(payload) !== value
     ) {
       throw new CursorInvalidError();
@@ -84,6 +87,7 @@ export function decodeHistoryCursor(
       Buffer.from(value, "base64url").toString("utf8"),
     ) as unknown;
     if (
+      !isPlainObject(payload) ||
       !hasExactKeys<HistoryCursorPayload>(payload, [
         "v",
         "taskId",
@@ -108,27 +112,4 @@ export function decodeHistoryCursor(
 
 export function priorityRank(priority: Priority): number {
   return { urgent: 0, high: 1, normal: 2, low: 3 }[priority];
-}
-
-function hasExactKeys<T extends object>(
-  value: unknown,
-  keys: readonly (keyof T & string)[],
-): value is T {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const actualKeys = Object.keys(value);
-  return (
-    actualKeys.length === keys.length &&
-    keys.every((key) => Object.hasOwn(value, key))
-  );
-}
-
-function isValidIdentifier(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.trim().length > 0 &&
-    [...value].length <= TASK_LIMITS.identifierCharacters &&
-    isWellFormedUnicode(value)
-  );
 }

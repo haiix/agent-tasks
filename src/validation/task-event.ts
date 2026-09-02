@@ -8,8 +8,15 @@ import {
   REOPENABLE_STATUSES,
 } from "../domain/transition.ts";
 import {
-  TASK_LIMITS,
+  hasExactKeys,
+  isPlainObject,
+  isValidIdentifier,
+  isValidTimestamp,
   isWellFormedUnicode,
+  type UnknownRecord,
+} from "./primitives.ts";
+import {
+  TASK_LIMITS,
   validateTask,
   validateTaskDependencies,
   validateUpdateTaskInput,
@@ -38,9 +45,6 @@ export interface ValidatedTaskEvent {
   readonly details: Readonly<Record<string, unknown>>;
 }
 
-const RFC_3339_UTC_MILLISECONDS =
-  /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}Z$/;
-
 const UPDATE_FIELDS = [
   "title",
   "description",
@@ -48,8 +52,6 @@ const UPDATE_FIELDS = [
   "labels",
   "metadata",
 ] as const satisfies readonly (keyof UpdateTaskInput)[];
-
-type UnknownRecord = Record<string, unknown>;
 
 export function validateTaskEvent(value: unknown): ValidatedTaskEvent {
   const event = requireExactObject(value, [
@@ -297,12 +299,7 @@ function requireExactObject(
   fields: readonly string[],
 ): UnknownRecord {
   const object = requireObject(value);
-  const actual = Object.keys(object).sort();
-  const expected = [...fields].sort();
-  if (
-    actual.length !== expected.length ||
-    actual.some((field, index) => field !== expected[index])
-  ) {
+  if (!hasExactKeys(object, fields)) {
     throw new Error("Object fields do not match the event schema.");
   }
   return object;
@@ -310,9 +307,7 @@ function requireExactObject(
 
 function requireObject(value: unknown): UnknownRecord {
   if (
-    value === null ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
+    !isPlainObject(value) ||
     Object.getPrototypeOf(value) !== Object.prototype
   ) {
     throw new Error("Expected an object.");
@@ -321,12 +316,7 @@ function requireObject(value: unknown): UnknownRecord {
 }
 
 function requireIdentifier(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !isWellFormedUnicode(value) ||
-    value.trim().length === 0 ||
-    [...value].length > TASK_LIMITS.identifierCharacters
-  ) {
+  if (!isValidIdentifier(value, TASK_LIMITS.identifierCharacters)) {
     throw new Error("Event identifier is invalid.");
   }
   return value;
@@ -346,12 +336,7 @@ function requireNullableText(value: unknown): string | null {
 }
 
 function requireTimestamp(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !RFC_3339_UTC_MILLISECONDS.test(value) ||
-    !Number.isFinite(Date.parse(value)) ||
-    new Date(Date.parse(value)).toISOString() !== value
-  ) {
+  if (!isValidTimestamp(value)) {
     throw new Error("Event timestamp is invalid.");
   }
   return value;

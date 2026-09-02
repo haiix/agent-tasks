@@ -12,6 +12,8 @@ import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { compareUnicodeCodePoints } from "./validation/primitives.ts";
+
 export interface SkillFile {
   readonly path: string;
   readonly content: string;
@@ -122,7 +124,7 @@ export function validateSkillBundle(bundle: SkillBundle): void {
     }
     paths.add(file.path);
   }
-  const sorted = [...paths].sort(compareCodePoints);
+  const sorted = [...paths].sort(compareUnicodeCodePoints);
   if (
     sorted.length === 0 ||
     sorted.some((path, index) => path !== bundle.files[index]?.path)
@@ -236,7 +238,7 @@ function matchesBundle(skillPath: string, bundle: SkillBundle): boolean {
   return (
     visit(skillPath, "") &&
     actualFiles
-      .sort(compareCodePoints)
+      .sort(compareUnicodeCodePoints)
       .every((path, index) => path === bundle.files[index]?.path) &&
     actualFiles.length === bundle.files.length
   );
@@ -251,15 +253,6 @@ function pathExists(path: string): boolean {
       return false;
     throw error;
   }
-}
-
-function compareCodePoints(left: string, right: string): number {
-  const a = [...left].map((character) => character.codePointAt(0) ?? 0);
-  const b = [...right].map((character) => character.codePointAt(0) ?? 0);
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    if (a[index] !== b[index]) return (a[index] ?? 0) - (b[index] ?? 0);
-  }
-  return a.length - b.length;
 }
 
 function readDevelopmentBundle(): SkillBundle {

@@ -10,6 +10,10 @@ import {
   migrationChecksum,
   SCHEMA_MIGRATIONS_SQL,
 } from "./migrations.ts";
+import {
+  defaultOperationDependencies,
+  type OperationDependencies,
+} from "./operation-dependencies.ts";
 
 export const BUSY_TIMEOUT_MS = 5_000;
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -32,9 +36,10 @@ export interface InitializeDatabaseResult {
   readonly created: boolean;
 }
 
-export interface MigrationOptions {
+export interface MigrationOptions extends Partial<
+  Pick<OperationDependencies, "now">
+> {
   readonly migrations?: readonly Migration[];
-  readonly now?: () => string;
 }
 
 export function initializeDatabase(
@@ -80,7 +85,7 @@ export function applyMigrations(
   options: MigrationOptions = {},
 ): number {
   const migrations = options.migrations ?? MIGRATIONS;
-  const now = options.now ?? (() => new Date().toISOString());
+  const now = options.now ?? defaultOperationDependencies.now;
 
   validateMigrationDefinitions(migrations, dbPath);
   withTransaction(database, "immediate", () => {

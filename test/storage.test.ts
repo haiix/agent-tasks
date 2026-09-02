@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, test } from "node:test";
@@ -15,14 +14,12 @@ import {
   LATEST_SCHEMA_VERSION,
 } from "../src/storage/database.ts";
 import type { Migration } from "../src/storage/migrations.ts";
+import {
+  cleanupTemporaryDirectories,
+  createTemporaryDirectory,
+} from "./support/temporary-directory.ts";
 
-const temporaryDirectories: string[] = [];
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+afterEach(cleanupTemporaryDirectories);
 
 void describe("SQLite storage", () => {
   void test("initializes an empty database at the latest schema", () => {
@@ -399,8 +396,7 @@ void describe("SQLite storage", () => {
 });
 
 function temporaryDatabasePath(nested = false): string {
-  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-storage-"));
-  temporaryDirectories.push(directory);
+  const directory = createTemporaryDirectory("agent-tasks-storage-");
   return nested
     ? join(directory, "nested", "tasks.sqlite")
     : join(directory, "tasks.sqlite");

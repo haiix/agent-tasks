@@ -3,16 +3,18 @@ import { spawn } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
-  mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  rmSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, test } from "node:test";
+
+import {
+  cleanupTemporaryDirectories,
+  createTemporaryDirectory,
+} from "./support/temporary-directory.ts";
 
 const builtCliPath = fileURLToPath(
   new URL("../dist/taskctl.mjs", import.meta.url),
@@ -21,18 +23,11 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const packageMetadata = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ) as { readonly name: string; readonly version: string };
-const temporaryDirectories: string[] = [];
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+afterEach(cleanupTemporaryDirectories);
 
 void test("the single ESM artifact runs without repository files", async () => {
   assert.equal(existsSync(builtCliPath), true, "run the build before tests");
-  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-dist-"));
-  temporaryDirectories.push(directory);
+  const directory = createTemporaryDirectory("agent-tasks-dist-");
   const isolatedCliPath = join(directory, "taskctl.mjs");
   copyFileSync(builtCliPath, isolatedCliPath);
   assert.deepEqual(readdirSync(directory), ["taskctl.mjs"]);
@@ -63,8 +58,7 @@ void test("the single ESM artifact runs without repository files", async () => {
 });
 
 void test("the npm tarball installs globally with the taskctl command", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-package-"));
-  temporaryDirectories.push(directory);
+  const directory = createTemporaryDirectory("agent-tasks-package-");
   const packDirectory = join(directory, "pack");
   const installPrefix = join(directory, "global");
   const npmCache = join(directory, "npm-cache");

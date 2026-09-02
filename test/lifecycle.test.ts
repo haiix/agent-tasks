@@ -1,21 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, test } from "node:test";
 
-import { runCli } from "../src/main.ts";
 import { claimTask } from "../src/storage/tasks.ts";
+import {
+  createCliFixture,
+  type Captured as BaseCaptured,
+} from "./support/cli-fixture.ts";
+import { cleanupTemporaryDirectories } from "./support/temporary-directory.ts";
 
-const temporaryDirectories: string[] = [];
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+afterEach(cleanupTemporaryDirectories);
 
 void describe("task lifecycle commands", () => {
   void test("claims, transitions, reopens, and returns event history", () => {
@@ -381,47 +376,30 @@ function encodeTestCursor(value: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
-interface Captured {
-  readonly exitCode: number;
-  readonly data: Record<string, unknown> & {
+type Captured = BaseCaptured<
+  Record<string, unknown> & {
     readonly task: Record<string, unknown>;
     readonly events?: readonly Record<string, unknown>[];
-  };
-  readonly error?: {
-    readonly code: string;
-    readonly message: string;
-    readonly details: Record<string, unknown>;
-  };
-}
+  }
+>;
 
 function initializedDatabase(): {
   readonly dbPath: string;
   readonly run: (args: readonly string[]) => Captured;
   readonly create: (title: string, dependsOn?: readonly string[]) => Captured;
 } {
-  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-lifecycle-"));
-  temporaryDirectories.push(directory);
-  const dbPath = join(directory, "tasks.sqlite");
-  const run = (args: readonly string[]): Captured => {
-    let stdout = "";
-    const result = runCli([...args, "--db", dbPath], {
-      cwd: directory,
-      environment: {},
-      writeStdout(value) {
-        stdout += value;
-      },
-    });
-    return {
-      exitCode: result.exitCode,
-      ...(JSON.parse(stdout) as Omit<Captured, "exitCode">),
-    };
-  };
-  assert.equal(run(["init"]).exitCode, 0);
+  const fixture = createCliFixture<Captured["data"]>({
+    prefix: "agent-tasks-lifecycle-",
+  });
   return {
-    dbPath,
-    run,
+    dbPath: fixture.dbPath,
+    run: fixture.run,
     create: (title, dependsOn = []) =>
-      run(["create", "--input-json", JSON.stringify({ title, dependsOn })]),
+      fixture.run([
+        "create",
+        "--input-json",
+        JSON.stringify({ title, dependsOn }),
+      ]),
   };
 }
 

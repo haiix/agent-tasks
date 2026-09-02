@@ -1,19 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, test } from "node:test";
 
 import { runCli } from "../src/main.ts";
+import {
+  createCliFixture,
+  type Captured as BaseCaptured,
+} from "./support/cli-fixture.ts";
+import { cleanupTemporaryDirectories } from "./support/temporary-directory.ts";
 
-const temporaryDirectories: string[] = [];
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+afterEach(cleanupTemporaryDirectories);
 
 void describe("create/get/update commands", () => {
   void test("creates and gets a task using the public JSON shape", () => {
@@ -1016,24 +1012,16 @@ function markDone(database: DatabaseSync, taskId: string): void {
     .run(taskId);
 }
 
-interface Captured {
-  readonly exitCode: number;
-  readonly data: {
-    readonly task: Record<string, unknown>;
-    readonly dependsOn: readonly unknown[];
-    readonly tasks: readonly Record<string, unknown>[];
-    readonly events: readonly Record<string, unknown>[];
-    readonly dependencies: readonly Record<string, unknown>[];
-    readonly schemaVersion: unknown;
-    readonly exportedAt: unknown;
-    readonly nextCursor: unknown;
-  };
-  readonly error?: {
-    readonly code: string;
-    readonly message: string;
-    readonly details: Record<string, unknown>;
-  };
-}
+type Captured = BaseCaptured<{
+  readonly task: Record<string, unknown>;
+  readonly dependsOn: readonly unknown[];
+  readonly tasks: readonly Record<string, unknown>[];
+  readonly events: readonly Record<string, unknown>[];
+  readonly dependencies: readonly Record<string, unknown>[];
+  readonly schemaVersion: unknown;
+  readonly exportedAt: unknown;
+  readonly nextCursor: unknown;
+}>;
 
 function runRaw(
   dbPath: string,
@@ -1073,32 +1061,13 @@ function initializedDatabase(): {
   readonly run: (args: readonly string[], stdin?: string) => Captured;
   readonly create: (input: Record<string, unknown>) => Captured;
 } {
-  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-commands-"));
-  temporaryDirectories.push(directory);
-  const dbPath = join(directory, "tasks.sqlite");
-  const run = (args: readonly string[], stdin?: string): Captured => {
-    let stdout = "";
-    const result = runCli([...args, "--db", dbPath], {
-      cwd: directory,
-      environment: {},
-      ...(stdin === undefined ? {} : { readStdin: () => stdin }),
-      writeStdout(value) {
-        stdout += value;
-      },
-    });
-    return {
-      exitCode: result.exitCode,
-      ...(JSON.parse(stdout) as Omit<Captured, "exitCode">),
-    };
-  };
-  const initialized = runCli(["init", "--db", dbPath], {
-    cwd: directory,
-    environment: {},
-    writeStdout() {},
+  const fixture = createCliFixture<Captured["data"]>({
+    prefix: "agent-tasks-commands-",
   });
-  assert.equal(initialized.exitCode, 0);
+  const run = (args: readonly string[], stdin?: string): Captured =>
+    fixture.run(args, stdin === undefined ? {} : { stdin });
   return {
-    dbPath,
+    dbPath: fixture.dbPath,
     run,
     create: (input) => run(["create", "--input-json", JSON.stringify(input)]),
   };

@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, test } from "node:test";
 
 import { runCli } from "../src/main.ts";
+import { captureCliResponse } from "./support/cli-fixture.ts";
+import {
+  cleanupTemporaryDirectories,
+  createTemporaryDirectory,
+} from "./support/temporary-directory.ts";
 
-const temporaryDirectories: string[] = [];
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+afterEach(cleanupTemporaryDirectories);
 
 void test("returns a machine-readable error when no command is provided", () => {
   let stdout = "";
@@ -202,9 +200,7 @@ void test("rejects duplicate and unsupported init options", () => {
 });
 
 function temporaryDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), "agent-tasks-cli-"));
-  temporaryDirectories.push(directory);
-  return directory;
+  return createTemporaryDirectory("agent-tasks-cli-");
 }
 
 function captureCli(
@@ -215,19 +211,12 @@ function captureCli(
   readonly result: ReturnType<typeof runCli>;
   readonly response: CapturedResponse;
 } {
-  let stdout = "";
-  const result = runCli(args, {
+  const { result, response } = captureCliResponse<CapturedResponse>(args, {
     cwd,
     environment:
       environmentPath === undefined ? {} : { AGENT_TASKS_DB: environmentPath },
-    writeStdout(value) {
-      stdout += value;
-    },
   });
-  return {
-    result,
-    response: JSON.parse(stdout) as unknown as CapturedResponse,
-  };
+  return { result, response };
 }
 
 interface CapturedResponse {

@@ -13,7 +13,6 @@ import {
   assertCanReopen,
 } from "../domain/transition.ts";
 import { DomainError, StorageError } from "../errors.ts";
-import { generateId } from "../id.ts";
 import {
   TASK_LIMITS,
   isValidTimestamp,
@@ -32,6 +31,11 @@ import {
   verifyDatabaseSchema,
   withTransaction,
 } from "./database.ts";
+import {
+  defaultOperationDependencies,
+  type OperationDependencies,
+  resolveOperationDependencies,
+} from "./operation-dependencies.ts";
 
 export class TaskNotFoundError extends Error {
   readonly code = "TASK_NOT_FOUND";
@@ -207,14 +211,12 @@ const PRIORITY_RANK = `CASE t.priority
 export function createTask(
   dbPath: string,
   input: CreateTaskInput,
-  options: {
-    readonly now?: () => string;
-    readonly generateId?: () => string;
-  } = {},
+  options: Partial<OperationDependencies> = {},
 ): TaskResult {
+  const dependencies = resolveOperationDependencies(options);
   return withDatabase(dbPath, (database) => {
-    const now = (options.now ?? (() => new Date().toISOString()))();
-    const makeId = options.generateId ?? generateId;
+    const now = dependencies.now();
+    const makeId = dependencies.generateId;
     const id = makeId();
     return withTransaction(database, "immediate", () => {
       for (const dependencyId of input.dependsOn) {
@@ -268,11 +270,9 @@ export function updateTask(
   taskId: string,
   expectedVersion: number,
   input: UpdateTaskInput,
-  options: {
-    readonly now?: () => string;
-    readonly generateId?: () => string;
-  } = {},
+  options: Partial<OperationDependencies> = {},
 ): TaskResult {
+  const dependencies = resolveOperationDependencies(options);
   return withDatabase(dbPath, (database) => {
     return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
@@ -283,7 +283,7 @@ export function updateTask(
           before.task.version,
         );
       }
-      const now = (options.now ?? (() => new Date().toISOString()))();
+      const now = dependencies.now();
       const values = {
         title: input.title ?? before.task.title,
         description: input.description ?? before.task.description,
@@ -318,7 +318,7 @@ export function updateTask(
         ) VALUES (?, ?, 'updated', NULL, ?, ?, ?, ?)`,
         )
         .run(
-          (options.generateId ?? generateId)(),
+          dependencies.generateId(),
           taskId,
           now,
           expectedVersion,
@@ -336,11 +336,9 @@ export function claimTask(
   taskId: string,
   agent: string,
   expectedVersion: number,
-  options: {
-    readonly now?: () => string;
-    readonly generateId?: () => string;
-  } = {},
+  options: Partial<OperationDependencies> = {},
 ): TaskResult {
+  const dependencies = resolveOperationDependencies(options);
   return withDatabase(dbPath, (database) => {
     return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
@@ -348,7 +346,7 @@ export function claimTask(
       assertStatus(taskId, before.task.status, ["pending"]);
       assertRunnable(database, taskId);
 
-      const now = (options.now ?? (() => new Date().toISOString()))();
+      const now = dependencies.now();
       const updated = database
         .prepare(
           `UPDATE tasks SET status = 'in_progress', assignee = ?, started_at = ?,
@@ -364,7 +362,7 @@ export function claimTask(
         );
       }
       insertTaskEvent(database, {
-        id: (options.generateId ?? generateId)(),
+        id: dependencies.generateId(),
         taskId,
         type: "claimed",
         actor: agent,
@@ -390,11 +388,9 @@ export function transitionTask(
   agent: string,
   expectedVersion: number,
   input: TransitionInput,
-  options: {
-    readonly now?: () => string;
-    readonly generateId?: () => string;
-  } = {},
+  options: Partial<OperationDependencies> = {},
 ): TaskResult {
+  const dependencies = resolveOperationDependencies(options);
   return withDatabase(dbPath, (database) => {
     return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
@@ -413,7 +409,7 @@ export function transitionTask(
       }
       if (to === "in_progress") assertRunnable(database, taskId);
 
-      const now = (options.now ?? (() => new Date().toISOString()))();
+      const now = dependencies.now();
       const next = transitionValues(before.task, to, agent, input, now);
       const updated = database
         .prepare(
@@ -441,7 +437,7 @@ export function transitionTask(
         );
       }
       insertTaskEvent(database, {
-        id: (options.generateId ?? generateId)(),
+        id: dependencies.generateId(),
         taskId,
         type: "transitioned",
         actor: agent,
@@ -466,11 +462,9 @@ export function reopenTask(
   taskId: string,
   agent: string,
   expectedVersion: number,
-  options: {
-    readonly now?: () => string;
-    readonly generateId?: () => string;
-  } = {},
+  options: Partial<OperationDependencies> = {},
 ): TaskResult {
+  const dependencies = resolveOperationDependencies(options);
   return withDatabase(dbPath, (database) => {
     return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
@@ -481,7 +475,7 @@ export function reopenTask(
         throw withTaskId(error, taskId);
       }
 
-      const now = (options.now ?? (() => new Date().toISOString()))();
+      const now = dependencies.now();
       const updated = database
         .prepare(
           `UPDATE tasks SET status = 'pending', assignee = NULL, blocked_reason = NULL,
@@ -498,7 +492,7 @@ export function reopenTask(
         );
       }
       insertTaskEvent(database, {
-        id: (options.generateId ?? generateId)(),
+        id: dependencies.generateId(),
         taskId,
         type: "reopened",
         actor: agent,
@@ -521,10 +515,7 @@ export function addTaskDependency(
   taskId: string,
   dependsOn: string,
   expectedVersion: number,
-  options: {
-    readonly now?: () => string;
-    readonly generateId?: () => string;
-  } = {},
+  options: Partial<OperationDependencies> = {},
 ): TaskResult {
   return changeTaskDependency(
     dbPath,
@@ -541,10 +532,7 @@ export function removeTaskDependency(
   taskId: string,
   dependsOn: string,
   expectedVersion: number,
-  options: {
-    readonly now?: () => string;
-    readonly generateId?: () => string;
-  } = {},
+  options: Partial<OperationDependencies> = {},
 ): TaskResult {
   return changeTaskDependency(
     dbPath,
@@ -698,7 +686,7 @@ export function getTaskHistory(
 
 export function exportTasks(
   dbPath: string,
-  options: { readonly now?: () => string } = {},
+  options: Partial<Pick<OperationDependencies, "now">> = {},
 ): ExportResult {
   return withDatabase(dbPath, (database) => {
     return withTransaction(database, "deferred", () => {
@@ -715,7 +703,7 @@ export function exportTasks(
         .all() as unknown as TaskDependency[];
       const result: ExportResult = {
         schemaVersion: 1,
-        exportedAt: (options.now ?? (() => new Date().toISOString()))(),
+        exportedAt: (options.now ?? defaultOperationDependencies.now)(),
         tasks,
         dependencies,
       };
@@ -919,11 +907,9 @@ function changeTaskDependency(
   dependsOn: string,
   expectedVersion: number,
   operation: "add" | "remove",
-  options: {
-    readonly now?: () => string;
-    readonly generateId?: () => string;
-  },
+  options: Partial<OperationDependencies>,
 ): TaskResult {
+  const dependencies = resolveOperationDependencies(options);
   return withDatabase(dbPath, (database) => {
     return withTransaction(database, "immediate", () => {
       const before = getTaskInDatabase(database, taskId);
@@ -954,7 +940,7 @@ function changeTaskDependency(
         }
       }
 
-      const now = (options.now ?? (() => new Date().toISOString()))();
+      const now = dependencies.now();
       database
         .prepare(
           "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ? AND version = ?",
@@ -967,7 +953,7 @@ function changeTaskDependency(
         ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
         )
         .run(
-          (options.generateId ?? generateId)(),
+          dependencies.generateId(),
           taskId,
           operation === "add" ? "dependencyAdded" : "dependencyRemoved",
           now,

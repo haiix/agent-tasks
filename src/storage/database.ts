@@ -266,20 +266,29 @@ function getMigration(
 
 export type TransactionMode = "deferred" | "immediate";
 
+type SynchronousResult<T> = T extends PromiseLike<unknown> ? never : T;
+
 export function withTransaction<T>(
   database: DatabaseSync,
   mode: TransactionMode,
-  operation: () => T,
+  operation: () => SynchronousResult<T>,
 ): T {
   if (database.isTransaction) {
     throw new Error("Nested transactions are not supported.");
+  }
+  if (operation.constructor.name === "AsyncFunction") {
+    throw new TypeError("Transaction operations must be synchronous.");
   }
 
   database.exec(mode === "immediate" ? "BEGIN IMMEDIATE" : "BEGIN");
   try {
     const result = operation();
+    if (isPromiseLike(result)) {
+      if (result instanceof Promise) void result.catch(() => undefined);
+      throw new TypeError("Transaction operations must be synchronous.");
+    }
     database.exec("COMMIT");
-    return result;
+    return result as T;
   } catch (error) {
     if (database.isTransaction) {
       try {
@@ -290,6 +299,13 @@ export function withTransaction<T>(
     }
     throw error;
   }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (typeof value === "object" && value !== null) ||
+    typeof value === "function"
+    ? typeof (value as { readonly then?: unknown }).then === "function"
+    : false;
 }
 
 export function toStorageError(error: unknown, dbPath: string): StorageError {

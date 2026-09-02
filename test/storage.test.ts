@@ -83,6 +83,53 @@ void describe("SQLite storage", () => {
     }
   });
 
+  void test("rejects asynchronous transaction operations before invoking them", () => {
+    const database = new DatabaseSync(":memory:");
+    let invoked = false;
+    try {
+      assert.throws(
+        () =>
+          withTransaction(
+            database,
+            "immediate",
+            // @ts-expect-error Transaction operations must not return promises.
+            async () => {
+              invoked = true;
+            },
+          ),
+        /Transaction operations must be synchronous/,
+      );
+      assert.equal(invoked, false);
+      assert.equal(database.isTransaction, false);
+    } finally {
+      database.close();
+    }
+  });
+
+  void test("rolls back promise-like results that bypass the type contract", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      database.exec("CREATE TABLE values_table (value TEXT NOT NULL) STRICT");
+      const hiddenPromiseOperation: () => unknown = () => {
+        database.prepare("INSERT INTO values_table VALUES (?)").run("lost");
+        return Promise.resolve("unexpected");
+      };
+
+      assert.throws(
+        () => withTransaction(database, "immediate", hiddenPromiseOperation),
+        /Transaction operations must be synchronous/,
+      );
+      assert.equal(database.isTransaction, false);
+      assert.equal(
+        database.prepare("SELECT count(*) AS count FROM values_table").get()
+          ?.count,
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   void test("initializes an empty database at the latest schema", () => {
     const dbPath = temporaryDatabasePath(true);
 

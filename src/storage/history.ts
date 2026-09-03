@@ -14,6 +14,11 @@ import {
 } from "./storage-errors.ts";
 import type { HistoryResult, TaskEvent, TaskEventRow } from "./task-types.ts";
 
+/**
+ * Returns a validated, version-ordered page of a task's event history.
+ * The complete stored history is checked for causal consistency before a page
+ * is returned.
+ */
 export function getTaskHistory(
   dbPath: string,
   taskId: string,
@@ -74,6 +79,11 @@ export function getTaskHistory(
   });
 }
 
+/**
+ * Inserts an event into the caller's current transaction.
+ * The event must already have been validated and made consistent with the task
+ * mutation recorded by that transaction.
+ */
 export function insertTaskEvent(
   database: DatabaseSync,
   event: TaskEvent,

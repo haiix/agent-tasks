@@ -47,12 +47,17 @@ export const TASK_SELECT = `
 export const PRIORITY_RANK = `CASE t.priority
   WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 END`;
 
+/** Retrieves one task together with its sorted dependency identifiers. */
 export function getTask(dbPath: string, taskId: string): TaskResult {
   return withDatabase(dbPath, (database) =>
     getTaskInDatabase(database, taskId),
   );
 }
 
+/**
+ * Returns one deterministic keyset-paginated task page.
+ * A cursor is valid only with the exact filters and limit that created it.
+ */
 export function listTasks(dbPath: string, filters: ListFilters): ListResult {
   return withDatabase(dbPath, (database) => {
     const signature = cursorSignature(filters);
@@ -132,6 +137,11 @@ export function listTasks(dbPath: string, filters: ListFilters): ListResult {
   });
 }
 
+/**
+ * Reads a transactionally consistent snapshot of every task and dependency.
+ * The result is ordered deterministically and is intended for inspection or
+ * backup, not as an editable persistence format.
+ */
 export function exportTasks(
   dbPath: string,
   options: Partial<Pick<OperationDependencies, "now">> = {},
@@ -218,6 +228,11 @@ export function rowToTask(row: TaskRow): Task & { readonly runnable: boolean } {
   }
 }
 
+/**
+ * Opens, configures, and validates a database for a synchronous operation.
+ * The connection is always closed, and low-level failures are normalized to
+ * stable domain or storage errors.
+ */
 export function withDatabase<T>(
   dbPath: string,
   operation: (database: DatabaseSync) => T,

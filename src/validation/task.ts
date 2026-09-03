@@ -50,6 +50,12 @@ class IssueCollector {
   }
 }
 
+/**
+ * Validates create input, rejects unknown fields, and applies documented
+ * defaults for omitted optional fields.
+ *
+ * @throws {@link DomainError} containing all validation issues found.
+ */
 export function validateCreateTaskInput(value: unknown): CreateTaskInput {
   const issues = new IssueCollector();
   const input = requireObject(value, "", issues);
@@ -97,6 +103,7 @@ export function validateCreateTaskInput(value: unknown): CreateTaskInput {
   };
 }
 
+/** Validates and deterministically sorts a task dependency identifier list. */
 export function validateTaskDependencies(value: unknown): readonly string[] {
   const issues = new IssueCollector();
   const dependencies = validateStringArray(value, "dependsOn", issues, {
@@ -107,6 +114,11 @@ export function validateTaskDependencies(value: unknown): readonly string[] {
   return dependencies;
 }
 
+/**
+ * Validates a non-empty partial update and rejects unknown fields.
+ *
+ * @throws {@link DomainError} containing all validation issues found.
+ */
 export function validateUpdateTaskInput(value: unknown): UpdateTaskInput {
   const issues = new IssueCollector();
   const input = requireObject(value, "", issues);
@@ -160,6 +172,11 @@ export function validateUpdateTaskInput(value: unknown): UpdateTaskInput {
   return output;
 }
 
+/**
+ * Validates the payload required by a destination status.
+ * Only `blocked` and `done` accept payloads; all other destinations require the
+ * payload to be absent.
+ */
 export function validateTransitionInput(
   to: TaskStatus,
   value: unknown,
@@ -187,6 +204,10 @@ export function validateTransitionInput(
   return undefined;
 }
 
+/**
+ * Validates a complete persisted task, including lifecycle invariants and
+ * timestamp ordering.
+ */
 export function validateTask(value: unknown): Task {
   const issues = new IssueCollector();
   const input = requireObject(value, "", issues);

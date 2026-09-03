@@ -20,6 +20,10 @@ import {
 } from "./storage-errors.ts";
 import type { TaskResult } from "./task-types.ts";
 
+/**
+ * Adds a dependency using optimistic concurrency control.
+ * Self-dependencies, duplicates, cycles, and missing tasks are rejected.
+ */
 export function addTaskDependency(
   dbPath: string,
   taskId: string,
@@ -37,6 +41,10 @@ export function addTaskDependency(
   );
 }
 
+/**
+ * Removes an existing dependency using optimistic concurrency control.
+ * A successful removal increments the owning task's version.
+ */
 export function removeTaskDependency(
   dbPath: string,
   taskId: string,

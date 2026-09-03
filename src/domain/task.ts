@@ -15,6 +15,11 @@ export type Priority = (typeof PRIORITIES)[number];
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+/**
+ * Canonical persisted task state.
+ * Lifecycle-specific nullable fields are constrained by the task's status, and
+ * every successful mutation increments {@link Task.version}.
+ */
 export interface Task {
   readonly id: string;
   readonly title: string;

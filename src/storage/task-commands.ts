@@ -26,6 +26,10 @@ import {
 import { NotRunnableError, VersionConflictError } from "./storage-errors.ts";
 import type { TaskResult } from "./task-types.ts";
 
+/**
+ * Creates a pending task and its initial event atomically.
+ * All referenced dependencies must already exist.
+ */
 export function createTask(
   dbPath: string,
   input: CreateTaskInput,
@@ -80,6 +84,12 @@ export function createTask(
   });
 }
 
+/**
+ * Applies a partial task update using optimistic concurrency control.
+ * A successful update increments the task version and records an event.
+ *
+ * @throws {@link VersionConflictError} when `expectedVersion` is stale.
+ */
 export function updateTask(
   dbPath: string,
   taskId: string,
@@ -141,6 +151,13 @@ export function updateTask(
   });
 }
 
+/**
+ * Atomically assigns a runnable pending task to an agent.
+ * A task is runnable only when all of its dependencies are done.
+ *
+ * @throws {@link VersionConflictError} when `expectedVersion` is stale.
+ * @throws {@link NotRunnableError} when a dependency is incomplete.
+ */
 export function claimTask(
   dbPath: string,
   taskId: string,
@@ -190,6 +207,13 @@ export function claimTask(
   });
 }
 
+/**
+ * Atomically moves a task through the normal lifecycle and records the actor.
+ * An existing assignment prevents a different agent from transitioning it.
+ *
+ * @throws {@link VersionConflictError} when `expectedVersion` is stale.
+ * @throws {@link DomainError} when the state or assignee is incompatible.
+ */
 export function transitionTask(
   dbPath: string,
   taskId: string,
@@ -265,6 +289,13 @@ export function transitionTask(
   });
 }
 
+/**
+ * Returns a completed or canceled task to a clean pending state.
+ * Assignment, lifecycle timestamps, blocked reason, and result are cleared.
+ *
+ * @throws {@link VersionConflictError} when `expectedVersion` is stale.
+ * @throws {@link DomainError} when the current state cannot be reopened.
+ */
 export function reopenTask(
   dbPath: string,
   taskId: string,

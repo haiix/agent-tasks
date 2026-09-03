@@ -24,6 +24,10 @@ interface HistoryCursorPayload {
   readonly toVersion: number;
 }
 
+/**
+ * Produces the canonical filter identity embedded in list cursors.
+ * Pagination cursors cannot be reused after any represented filter changes.
+ */
 export function cursorSignature(filters: ListFilters): string {
   return JSON.stringify({
     status: filters.status ?? null,
@@ -40,6 +44,12 @@ export function encodeCursor(payload: CursorPayload): string {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
+/**
+ * Decodes and validates a canonical list cursor for the expected filter set.
+ *
+ * @throws {@link CursorInvalidError} for malformed, non-canonical, unsupported,
+ * or filter-mismatched cursors.
+ */
 export function decodeCursor(value: string, signature: string): CursorPayload {
   try {
     const payload = JSON.parse(
@@ -77,6 +87,12 @@ export function encodeHistoryCursor(payload: HistoryCursorPayload): string {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
+/**
+ * Decodes a canonical history cursor bound to a specific task and page size.
+ *
+ * @throws {@link CursorInvalidError} when the cursor cannot continue the
+ * requested history query.
+ */
 export function decodeHistoryCursor(
   value: string,
   taskId: string,

@@ -53,6 +53,9 @@ const UPDATE_FIELDS = [
   "metadata",
 ] as const satisfies readonly (keyof UpdateTaskInput)[];
 
+/**
+ * Validates one persisted event and the event-type-specific details payload.
+ */
 export function validateTaskEvent(value: unknown): ValidatedTaskEvent {
   const event = requireExactObject(value, [
     "id",
@@ -94,6 +97,10 @@ export function validateTaskEvent(value: unknown): ValidatedTaskEvent {
   };
 }
 
+/**
+ * Verifies that a complete event stream is contiguous and reaches the current
+ * persisted task version and status.
+ */
 export function validateTaskEventHistory(
   events: readonly ValidatedTaskEvent[],
   task: Readonly<{ readonly version: unknown; readonly status: unknown }>,

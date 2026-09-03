@@ -14,6 +14,15 @@ export interface CliMetadata {
   readonly version: string;
 }
 
+/**
+ * Parses and executes one CLI invocation, converting parsing and command
+ * failures into stable CLI responses. Output writer failures may escape.
+ *
+ * @param args - Arguments after the executable name.
+ * @param io - The output and environment boundary used by command handlers.
+ * @param metadata - Build metadata exposed by commands such as `--version`.
+ * @returns The exit code that the caller should assign to the process.
+ */
 export function runCli(
   args: readonly string[],
   io: CliIo,

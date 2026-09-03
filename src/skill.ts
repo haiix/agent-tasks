@@ -42,6 +42,10 @@ export class SkillConflictError extends Error {
   }
 }
 
+/**
+ * Returns the validated skill embedded in a production build, or reconstructs
+ * the same bundle from repository files during source execution.
+ */
 export function bundledSkill(): SkillBundle {
   const bundle =
     typeof __TASKCTL_SKILL_BUNDLE__ === "undefined"
@@ -51,6 +55,14 @@ export function bundledSkill(): SkillBundle {
   return bundle;
 }
 
+/**
+ * Installs a skill bundle without overwriting or merging existing content.
+ * Installation is idempotent for an exact match and uses a temporary directory
+ * plus rename so a partial bundle is never exposed as installed.
+ *
+ * @throws {@link SkillConflictError} when the destination differs, contains an
+ * unsafe path element, or appears concurrently during installation.
+ */
 export function installSkill(
   projectRoot: string,
   bundle: SkillBundle = bundledSkill(),
@@ -103,6 +115,10 @@ export function installSkill(
   return skillResult(normalizedRoot, skillPath, bundle, true, files);
 }
 
+/**
+ * Validates embedded skill identity, portable relative paths, uniqueness, and
+ * deterministic Unicode code-point ordering.
+ */
 export function validateSkillBundle(bundle: SkillBundle): void {
   if (bundle.name !== "agent-tasks" || bundle.version.length === 0) {
     throw new Error("Invalid embedded skill metadata.");

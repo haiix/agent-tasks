@@ -33,6 +33,13 @@ export class NotInitializedError extends Error {
   }
 }
 
+/**
+ * Resolves the database selected by CLI precedence and project discovery.
+ * Explicit or environment paths take precedence; otherwise non-init commands
+ * search the current directory and its ancestors for an initialized database.
+ *
+ * @throws {@link NotInitializedError} when no usable database can be found.
+ */
 export function resolveDatabasePath(
   options: ResolveDatabasePathOptions,
 ): string {

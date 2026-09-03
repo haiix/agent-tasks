@@ -16,6 +16,12 @@ export const ALLOWED_TRANSITIONS = {
 
 export const REOPENABLE_STATUSES = ["done", "canceled"] as const;
 
+/**
+ * Verifies that a normal state transition is permitted by the task lifecycle.
+ *
+ * @throws {@link DomainError} with `STATE_CONFLICT` when the transition is not
+ * allowed.
+ */
 export function assertAllowedTransition(
   from: TaskStatus,
   to: TaskStatus,
@@ -32,6 +38,12 @@ export function assertAllowedTransition(
   );
 }
 
+/**
+ * Verifies that a terminal task may return to the pending state.
+ *
+ * @throws {@link DomainError} with `STATE_CONFLICT` when the task is not
+ * reopenable.
+ */
 export function assertCanReopen(from: TaskStatus): void {
   if ((REOPENABLE_STATUSES as readonly TaskStatus[]).includes(from)) {
     return;
@@ -44,6 +56,11 @@ export function assertCanReopen(from: TaskStatus): void {
   );
 }
 
+/**
+ * Derives the lifecycle fields for a transition without mutating the task.
+ * The caller is responsible for validating that the transition and input are
+ * allowed before applying the returned patch.
+ */
 export function deriveTransitionPatch(
   task: Task,
   destination: TaskStatus,

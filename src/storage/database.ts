@@ -42,6 +42,11 @@ export interface MigrationOptions extends Partial<
   readonly migrations?: readonly Migration[];
 }
 
+/**
+ * Creates the database file when needed and migrates it to the latest schema.
+ * Parent directories are created recursively and the connection is closed
+ * before this function returns.
+ */
 export function initializeDatabase(
   dbPath: string,
   options: MigrationOptions = {},
@@ -73,12 +78,19 @@ function createDatabaseFile(dbPath: string): boolean {
   }
 }
 
+/** Applies the connection invariants required by every database operation. */
 export function configureConnection(database: DatabaseSync): void {
   database.exec("PRAGMA foreign_keys = ON");
   database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
   database.exec("PRAGMA journal_mode = WAL");
 }
 
+/**
+ * Validates and applies the supplied migrations in one immediate transaction.
+ * Previously applied migrations must match their current name and checksum.
+ *
+ * @returns The latest schema version, or zero when no migrations are supplied.
+ */
 export function applyMigrations(
   database: DatabaseSync,
   dbPath: string,
@@ -166,6 +178,10 @@ function validateAppliedMigrations(
   }
 }
 
+/**
+ * Verifies that migration history and the physical SQLite schema exactly match
+ * the schema supported by this application.
+ */
 export function verifyDatabaseSchema(
   database: DatabaseSync,
   dbPath: string,
@@ -273,6 +289,11 @@ export type TransactionMode = "deferred" | "immediate";
 
 type SynchronousResult<T> = T extends PromiseLike<unknown> ? never : T;
 
+/**
+ * Runs a synchronous callback in a top-level SQLite transaction.
+ * The transaction commits on success and rolls back when the callback throws.
+ * Nested transactions and promise-like callback results are rejected.
+ */
 export function withTransaction<T>(
   database: DatabaseSync,
   mode: TransactionMode,
@@ -313,6 +334,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     : false;
 }
 
+/** Converts an unknown SQLite or filesystem failure into a stable storage error. */
 export function toStorageError(error: unknown, dbPath: string): StorageError {
   if (error instanceof StorageError) return error;
   const sqliteCode = getErrorCode(error);

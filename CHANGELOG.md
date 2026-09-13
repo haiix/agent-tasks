@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.1](https://github.com/haiix/agent-tasks/compare/v0.2.0...v0.2.1) (2026-09-13)
+
+
+### Changed
+
+* centralize SQLite transactions ([#64](https://github.com/haiix/agent-tasks/issues/64)) ([e56402d](https://github.com/haiix/agent-tasks/commit/e56402d17de99f6dd727329dd76b3d444dede714))
+* derive transition values in domain layer ([#67](https://github.com/haiix/agent-tasks/issues/67)) ([7ab8bd6](https://github.com/haiix/agent-tasks/commit/7ab8bd620e61c133c194554b9dbabac4e0381868))
+* extract validation primitives ([#68](https://github.com/haiix/agent-tasks/issues/68)) ([2d9b93c](https://github.com/haiix/agent-tasks/commit/2d9b93cae75ba57763df2d747ef5d02b3f3d17a2))
+* separate CLI responsibilities ([#69](https://github.com/haiix/agent-tasks/issues/69)) ([10aaa47](https://github.com/haiix/agent-tasks/commit/10aaa47444a1545a4e7f164ab922b56d150aae3e))
+* split task storage responsibilities ([#66](https://github.com/haiix/agent-tasks/issues/66)) ([150f19b](https://github.com/haiix/agent-tasks/commit/150f19bfcee0bf2e6334a036a8cbcb989cbc3f94))
+* unify storage operation dependencies ([#65](https://github.com/haiix/agent-tasks/issues/65)) ([b1034bf](https://github.com/haiix/agent-tasks/commit/b1034bf399edf1572b3846452e2dba63f7166acd))
+
+
+### Documentation
+
+* add TSDoc comments and policy ([#73](https://github.com/haiix/agent-tasks/issues/73)) ([82f12e4](https://github.com/haiix/agent-tasks/commit/82f12e44c6d278588a82aeca3e72b148856b0b01))
+
 ## [0.2.0](https://github.com/haiix/agent-tasks/compare/v0.1.0...v0.2.0) (2026-09-01)
 
 

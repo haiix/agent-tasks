@@ -38,7 +38,7 @@
     "prepack": "npm run build"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
+    "@biomejs/biome": "2.5.13",
     "@types/node": "^26.3.0",
     "esbuild": "^0.28.2",
     "prettier": "^3.9.6",

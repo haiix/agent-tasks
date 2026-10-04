@@ -1,6 +1,6 @@
 {
   "name": "@haiix/agent-tasks",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local task management CLI for AI agents",
   "type": "module",
   "bin": {
